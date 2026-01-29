@@ -5,59 +5,69 @@ import { State } from './state.js';
  * Gerencia o carregamento dinâmico de jogos (Cartuchos Virtuais).
  */
 export const Router = {
-    activeGame: null, // Objeto do jogo rodando atualmente
+    activeGame: null,
     registry: {
-        'MENU': './js/menu_console.js', // Menu Principal (Bloco 2)
-        'KART': './js/game_kart.js'     // Jogo de Kart (Bloco 3)
+        'MENU': './js/menu_console.js',
+        'KART': './js/game_kart.js'
     },
 
     init: () => {
-        // Carrega o Menu Principal por padrão
-        // Como o menu ainda não foi criado no Bloco 1, deixamos um placeholder
-        console.log("🔄 [ROUTER] Pronto. Aguardando comando de carga.");
+        // CORREÇÃO CRÍTICA: Agora carregamos o MENU automaticamente ao iniciar
+        console.log("🚀 [ROUTER] Boot executado. Carregando Interface...");
+        Router.load('MENU');
     },
 
     load: async (gameKey) => {
-        console.log(`📂 [ROUTER] Carregando Cartucho: ${gameKey}...`);
+        console.log(`📂 [ROUTER] Lendo Cartucho: ${gameKey}...`);
         
-        // 1. Cleanup do jogo anterior
+        // 1. Limpeza do jogo anterior (Garbage Collection)
         if (Router.activeGame && Router.activeGame.cleanup) {
-            Router.activeGame.cleanup();
+            try {
+                Router.activeGame.cleanup();
+            } catch (e) {
+                console.warn("Erro ao limpar jogo anterior:", e);
+            }
         }
         Router.activeGame = null;
 
         // 2. Verifica registro
         const scriptPath = Router.registry[gameKey];
         if (!scriptPath) {
-            console.error("❌ Jogo não encontrado no registro.");
+            console.error(`❌ ERRO FATAL: Jogo '${gameKey}' não registrado.`);
             return;
         }
 
-        // 3. Carregamento Dinâmico do Script
+        // 3. Injeção Dinâmica
         try {
             await Router.injectScript(scriptPath);
             
-            // O Script do jogo deve setar window.CurrentGame
             if (window.CurrentGame) {
                 Router.activeGame = window.CurrentGame;
                 if (Router.activeGame.init) Router.activeGame.init();
-                console.log(`✅ [ROUTER] ${gameKey} Iniciado com Sucesso.`);
+                
+                // Força resize para garantir renderização
+                if (window.System && window.System.resize) window.System.resize();
+                
+                console.log(`✅ [ROUTER] ${gameKey} Rodando.`);
             } else {
-                throw new Error("Script carregado, mas window.CurrentGame não definido.");
+                throw new Error(`O arquivo ${scriptPath} não definiu window.CurrentGame`);
             }
 
         } catch (e) {
-            console.error("❌ Erro ao carregar jogo:", e);
+            console.error("❌ Falha no carregamento:", e);
         }
     },
 
     injectScript: (src) => {
         return new Promise((resolve, reject) => {
-            // Remove script anterior se existir (opcional, simples aqui)
+            const old = document.querySelector(`script[src="${src}"]`);
+            if (old) old.remove();
+
             const script = document.createElement('script');
             script.src = src;
+            script.type = 'module';
             script.onload = resolve;
-            script.onerror = reject;
+            script.onerror = (e) => reject(`Falha ao carregar script: ${src}`);
             document.body.appendChild(script);
         });
     }
