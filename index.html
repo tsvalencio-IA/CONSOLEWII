@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#111111">
+    <title>ThIAguinho Wii: Console WEB</title>
+    
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.json">
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('service-worker.js')
+                .then(() => console.log("Service Worker Registered"))
+                .catch(e => console.error("SW Error:", e));
+        }
+    </script>
+
+    <!-- LIBS ESSENCIAIS -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- FIREBASE (v8 Legacy para compatibilidade) -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;700&family=Russo+One&family=Roboto:wght@300;400;700&display=swap');
+        
+        :root { --sys-blue: #58b4e8; --sys-dark: #111; }
+        body { background: var(--sys-dark); margin: 0; overflow: hidden; font-family: 'Roboto', sans-serif; user-select: none; -webkit-touch-callout: none; }
+        
+        /* LAYOUT PRINCIPAL */
+        #console-root { position: relative; width: 100vw; height: 100vh; }
+        #game-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; display: block; }
+        
+        /* WEBCAM PREVIEW (Debug/Calibration) */
+        #webcam-feed { 
+            position: absolute; bottom: 20px; right: 20px; width: 160px; height: 120px;
+            border-radius: 12px; border: 3px solid rgba(255,255,255,0.3); 
+            transform: scaleX(-1); z-index: 90; object-fit: cover; opacity: 0; transition: opacity 0.5s; pointer-events: none;
+        }
+
+        /* UI CAMADA */
+        #ui-layer { position: absolute; inset: 0; z-index: 50; pointer-events: none; display: flex; flex-direction: column; }
+        .interactive { pointer-events: auto !important; }
+
+        /* LOADING SYSTEM */
+        #sys-loader { 
+            position: fixed; inset: 0; background: #000; z-index: 1000; 
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: opacity 0.5s;
+        }
+        .spinner { width: 40px; height: 40px; border: 4px solid var(--sys-blue); border-top-color: transparent; border-radius: 50%; animation: rot 1s infinite linear; }
+        @keyframes rot { to { transform: rotate(360deg); } }
+
+        /* CRT SCANLINES */
+        .scanlines {
+            position: fixed; inset: 0; pointer-events: none; z-index: 999;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%);
+            background-size: 100% 4px; opacity: 0.6;
+        }
+    </style>
+</head>
+<body>
+    <div id="console-root">
+        <!-- HARDWARE -->
+        <video id="webcam-feed" autoplay playsinline muted></video>
+        <canvas id="game-canvas"></canvas>
+        
+        <!-- VISUAL FX -->
+        <div class="scanlines"></div>
+
+        <!-- USER INTERFACE -->
+        <div id="ui-layer"></div>
+
+        <!-- SYSTEM LOADER -->
+        <div id="sys-loader">
+            <div class="spinner"></div>
+            <p style="color:white; margin-top:20px; font-family:'Russo One'; letter-spacing:1px;">BOOTING SYSTEM...</p>
+        </div>
+    </div>
+
+    <!-- CORE KERNEL -->
+    <script type="module">
+        import { System } from './core/system.js';
+        window.System = System; 
+        window.onload = System.boot;
+    </script>
+</body>
+</html>
