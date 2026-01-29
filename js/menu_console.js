@@ -1,148 +1,112 @@
 /**
- * CONSOLE MENU (Wii Style)
- * Interface principal para seleção de canais (Jogos).
+ * MENU PRINCIPAL (INTERFACE VISUAL)
  */
 window.CurrentGame = {
-    state: {
-        cursor: { x: 0, y: 0, active: false },
-        channels: [
-            { id: 'KART', title: 'Kart Channel', color: '#58b4e8', icon: '🏎️' },
-            { id: 'MII', title: 'Mii Maker', color: '#e0e0e0', icon: '👤', disabled: true },
-            { id: 'SETTINGS', title: 'Config', color: '#95a5a6', icon: '⚙️', disabled: true },
-            { id: 'EMPTY', title: '...', color: '#ecf0f1', icon: '', disabled: true }
-        ],
-        hoverIdx: -1,
-        loaded: false
-    },
+    loaded: false,
+    hoverIdx: -1,
+    
+    // Configuração dos Canais (Botões)
+    channels: [
+        { id: 'KART', title: 'Kart Channel', color: '#58b4e8', icon: '🏎️' },
+        { id: 'MII', title: 'Mii Channel', color: '#bdc3c7', icon: '👤', disabled: true },
+        { id: 'CONFIG', title: 'Settings', color: '#95a5a6', icon: '⚙️', disabled: true },
+        { id: 'SHOP', title: 'Shop', color: '#f1c40f', icon: '🛒', disabled: true }
+    ],
 
     init: function() {
-        console.log("💿 [MENU] Console Iniciado");
+        console.log("💿 [MENU] Interface Carregada.");
+        this.loaded = true;
         this.resize();
-        this.state.loaded = true;
+        
+        // Listener de clique global para navegação
+        this.clickHandler = (e) => this.handleClick(e);
+        window.addEventListener('click', this.clickHandler);
     },
 
     cleanup: function() {
-        console.log("👋 [MENU] Encerrando...");
+        console.log("👋 [MENU] Encerrando Interface.");
+        window.removeEventListener('click', this.clickHandler);
     },
 
     update: function(dt, pose) {
-        if (!this.state.loaded) return;
-
-        // 1. INPUT HANDLING (Pose ou Mouse)
-        if (pose && pose.keypoints) {
-            // Usa o nariz como cursor
-            const nose = pose.keypoints.find(k => k.name === 'nose');
-            if (nose && nose.score > 0.5) {
-                // Mapeia coordenadas normalizadas da câmera para a tela
-                // Câmera é espelhada, então invertemos X
-                this.state.cursor.x = (1 - nose.x) * window.innerWidth;
-                this.state.cursor.y = nose.y * window.innerHeight;
-                this.state.cursor.active = true;
-            }
-        } else {
-            // Fallback para Mouse (sempre ativo para debug)
-            // (Assumindo que o sistema não bloqueia mouse)
-        }
-
-        // 2. DETECTAR HOVER
-        this.state.hoverIdx = -1;
-        const w = window.innerWidth;
-        const h = window.innerHeight;
-        const gridW = w * 0.8;
-        const startX = w * 0.1;
-        const cellW = gridW / 4;
+        if (!this.loaded) return;
         
-        // Simulação simples de colisão cursor-célula
-        // Apenas verifica se o cursor está na área do primeiro canal (Kart)
-        // Em um sistema completo, verificaria bounding box de cada canal
-        if (this.state.cursor.x > startX && this.state.cursor.x < startX + cellW &&
-            this.state.cursor.y > h * 0.3 && this.state.cursor.y < h * 0.7) {
-            this.state.hoverIdx = 0; // Kart Channel
-        }
-
-        // 3. SELEÇÃO (Tempo de Hover ou Clique)
-        // Aqui usaremos clique do mouse ou gesto simples (futuro)
-        // Por enquanto, clique do mouse no canvas dispara a ação
+        // Lógica de Cursor (Mouse ou Pose) seria aqui
+        // Por enquanto, usamos o mouse nativo do navegador
     },
 
     draw: function(ctx, w, h) {
-        // Fundo
+        // 1. Fundo Limpo (Branco Wii)
         ctx.fillStyle = '#ecf0f1';
         ctx.fillRect(0, 0, w, h);
 
-        // Grid de Canais
-        const gridW = w * 0.8;
+        // 2. Grid de Canais
+        const margin = 20;
+        const cols = 4;
+        const cellW = (w - (margin * (cols + 1))) / cols;
         const cellH = h * 0.4;
-        const startX = w * 0.1;
         const startY = h * 0.3;
-        const cellW = gridW / 4;
 
-        this.state.channels.forEach((ch, i) => {
-            if (i > 3) return; // Mostra apenas 4
+        this.channels.forEach((ch, i) => {
+            if(i >= cols) return; // Limite de demo
 
-            const x = startX + (i * cellW) + 10;
+            const x = margin + (i * (cellW + margin));
             const y = startY;
-            const cw = cellW - 20;
-            
+
             // Sombra
             ctx.fillStyle = 'rgba(0,0,0,0.1)';
-            ctx.fillRect(x + 5, y + 5, cw, cellH);
+            ctx.fillRect(x + 5, y + 5, cellW, cellH);
 
-            // Card
-            const isHover = (this.state.hoverIdx === i);
-            ctx.fillStyle = ch.disabled ? '#bdc3c7' : (isHover ? '#3498db' : '#fff');
-            ctx.fillRect(x, y, cw, cellH);
+            // Botão
+            ctx.fillStyle = ch.disabled ? '#bdc3c7' : '#fff';
             
-            // Borda
-            ctx.strokeStyle = '#bdc3c7';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x, y, cw, cellH);
+            // Hover simples (baseado em posição aproximada do mouse se tivéssemos tracking aqui)
+            // Desenhando borda
+            ctx.strokeStyle = '#95a5a6';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(x, y, cellW, cellH);
+            ctx.fillRect(x, y, cellW, cellH);
 
-            // Conteúdo
-            ctx.fillStyle = ch.disabled ? '#7f8c8d' : (isHover ? '#fff' : '#2c3e50');
+            // Ícone e Texto
+            ctx.fillStyle = '#2c3e50';
             ctx.textAlign = 'center';
-            ctx.font = "60px Arial";
-            ctx.fillText(ch.icon, x + cw/2, y + cellH/2);
+            ctx.font = '60px Arial';
+            ctx.fillText(ch.icon, x + cellW/2, y + cellH/2);
             
-            ctx.font = "bold 18px 'Roboto'";
-            ctx.fillText(ch.title, x + cw/2, y + cellH - 20);
+            ctx.font = 'bold 20px sans-serif';
+            ctx.fillText(ch.title, x + cellW/2, y + cellH - 20);
 
-            // Armazena área para clique (hack rápido)
-            if (i === 0) this.state.btnRect = { x, y, w: cw, h: cellH };
+            // Salva área para clique
+            ch.rect = { x, y, w: cellW, h: cellH };
         });
 
-        // Título
-        ctx.fillStyle = '#7f8c8d';
-        ctx.font = "20px 'Chakra Petch'";
-        ctx.textAlign = 'center';
-        ctx.fillText(new Date().toLocaleTimeString(), w/2, h - 30);
-        ctx.fillText("Selecione um Canal", w/2, 50);
+        // 3. Rodapé
+        ctx.fillStyle = '#bdc3c7';
+        ctx.fillRect(0, h - 50, w, 50);
+        ctx.fillStyle = '#fff';
+        ctx.font = '16px sans-serif';
+        ctx.fillText("Clique no Kart Channel para iniciar", w/2, h - 20);
+    },
 
-        // Cursor
-        if (this.state.cursor.active) {
-            ctx.fillStyle = '#3498db';
-            ctx.beginPath();
-            ctx.arc(this.state.cursor.x, this.state.cursor.y, 10, 0, Math.PI*2);
-            ctx.fill();
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-        }
+    handleClick: function(e) {
+        const mx = e.clientX;
+        const my = e.clientY;
+
+        this.channels.forEach(ch => {
+            if (ch.rect && 
+                mx >= ch.rect.x && mx <= ch.rect.x + ch.rect.w &&
+                my >= ch.rect.y && my <= ch.rect.y + ch.rect.h) {
+                
+                if (ch.id === 'KART' && !ch.disabled) {
+                    // Toca som se houver (opcional)
+                    // Carrega o jogo
+                    import('../core/router.js').then(r => r.Router.load('KART'));
+                }
+            }
+        });
     },
 
     resize: function() {
-        // Recalcula layout se necessário
-    }
-};
-
-// Evento de Clique para Seleção
-window.onclick = (e) => {
-    if (!window.CurrentGame || !window.CurrentGame.state) return;
-    const btn = window.CurrentGame.state.btnRect;
-    if (btn && e.clientX >= btn.x && e.clientX <= btn.x + btn.w && e.clientY >= btn.y && e.clientY <= btn.y + btn.h) {
-        // Carrega o Router dinamicamente para trocar de jogo
-        import('../core/router.js').then(module => {
-            module.Router.load('KART');
-        });
+        // Força redesenho
     }
 };
