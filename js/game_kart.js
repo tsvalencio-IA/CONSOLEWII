@@ -129,7 +129,9 @@
             this.inputActive = false;
             // Limpeza total para evitar "Cenários Misturados"
             segments = []; minimapPath = [];
-            this.rivals = []; particles = []; hudMessages = [];
+this.rivals = []; particles = []; hudMessages = [];
+trackLength = 0;
+
         },
 
         pushMsg: function(text, color='#fff', size=40) {
@@ -411,10 +413,10 @@
                         r.x += (Math.random() - 0.5) * 0.15; // Variação instável
                     } else {
                         // Comportamento normal
-                        const targetSpeed = (CONF.MAX_SPEED * rChar.speedInfo) - (Math.abs(rSeg.curve) * 15); 
+                        const targetSpeed = (CONF.MAX_SPEED * rChar.speedInfo) - (Math.abs(rSeg.curve) * 8); 
                         
                         // CORREÇÃO IA PARADA: Launch Control / Boost inicial se estiver muito lento
-                        if (r.speed < 50 && r.pos < 2000) r.speed += rChar.accel * 3; // Arrancada forte
+                        if (r.speed < 50 && r.pos < 6000) r.speed += rChar.accel * 3; // Arrancada forte
                         else if (r.speed < targetSpeed) r.speed += rChar.accel * 0.85;
                         
                         // Traçado ideal (Ligeiramente fora do centro nas curvas)
@@ -427,7 +429,7 @@
                         }
                     }
                     
-                    r.speed *= 0.99;
+                    r.speed *= 0.995;
                     r.x = Math.max(-1.8, Math.min(1.8, r.x)); // Limites
 
                     // Colisão simples IA
@@ -651,7 +653,7 @@
                 ctx.save(); ctx.translate(mapX + mapSize/2, mapY + mapSize/2);
                 const scale = Math.min((mapSize-20)/minimapBounds.w, (mapSize-20)/minimapBounds.h);
                 ctx.scale(scale, scale); ctx.translate(-(minimapBounds.minX+minimapBounds.maxX)/2, -(minimapBounds.minZ+minimapBounds.maxZ)/2);
-                ctx.strokeStyle = '#fff'; ctx.lineWidth = 15; ctx.beginPath();
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 10; ctx.beginPath();
                 minimapPath.forEach((p, i) => { if(i===0) ctx.moveTo(p.x, p.z); else ctx.lineTo(p.x, p.z); });
                 ctx.closePath(); ctx.stroke();
                 const drawDot = (pos, c, r) => {
@@ -663,8 +665,8 @@
                     }
                 };
                 // Correção IA Minimapa: Pontos maiores e garantindo render
-                d.rivals.forEach(r => drawDot(r.pos, '#ffcc00', 16)); // Amarelo Neon, maior
-                drawDot(d.pos, '#f00', 16);
+               d.rivals.forEach(r => drawDot(r.pos, '#ffee00', 14)); // IA menor
+drawDot(d.pos, '#ff0000', 18);
                 ctx.restore();
             }
 
