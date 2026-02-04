@@ -420,7 +420,7 @@ trackLength = 0;
                         else if (r.speed < targetSpeed) r.speed += rChar.accel * 0.85;
                         
                         // Traçado ideal (Ligeiramente fora do centro nas curvas)
-                        const idealX = -(rSeg.curve * 0.45); 
+                        const idealX = -(rSeg.curve * 0.35); 
                         r.x += (idealX - r.x) * 0.07;
                         
                         // Agressividade (Fecha o player)
@@ -430,6 +430,8 @@ trackLength = 0;
                     }
                     
                     r.speed *= 0.995;
+                    r.speed = Math.max(0, r.speed);
+
                     r.x = Math.max(-1.8, Math.min(1.8, r.x)); // Limites
 
                     // Colisão simples IA
