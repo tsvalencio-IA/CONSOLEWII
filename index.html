@@ -3,920 +3,241 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="#111111">
-    <title>ThIAguinho Wii: Console WEB (Unified Kernel)</title>
+    <title>ThIAguinho Wii: Console OS</title>
     
-    <!-- LIBS ESSENCIAIS (CDNs) -->
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- TensorFlow.js & MoveNet -->
+    <!-- Bibliotecas Essenciais -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- FIREBASE (v8 Legacy para compatibilidade com o código original) -->
+    <!-- FIREBASE -->
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;700&family=Russo+One&family=Roboto:wght@300;400;700&display=swap');
-        
-        :root { --sys-blue: #58b4e8; --sys-dark: #111; }
-        body { background: var(--sys-dark); margin: 0; overflow: hidden; font-family: 'Roboto', sans-serif; user-select: none; -webkit-touch-callout: none; }
-        
-        /* LAYOUT PRINCIPAL */
-        #console-root { position: relative; width: 100vw; height: 100vh; }
-        #game-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; display: block; }
-        
-        /* WEBCAM PREVIEW (Debug/Calibration) */
-        #webcam-feed { 
-            position: absolute; bottom: 20px; right: 20px; width: 160px; height: 120px;
-            border-radius: 12px; border: 3px solid rgba(255,255,255,0.3); 
-            transform: scaleX(-1); z-index: 90; object-fit: cover; opacity: 0; transition: opacity 0.5s; pointer-events: none;
+
+        :root {
+            --wii-bg: #ececec;
+            --wii-blue: #58b4e8;
+            --wii-gray-text: #666;
         }
 
-        /* UI CAMADA */
-        #ui-layer { position: absolute; inset: 0; z-index: 50; pointer-events: none; display: flex; flex-direction: column; }
-        .interactive { pointer-events: auto !important; }
+        body { 
+            background: radial-gradient(circle at center, #ffffff 0%, #e0e0e0 100%);
+            margin: 0; overflow: hidden; 
+            font-family: 'Roboto', sans-serif; 
+            user-select: none; touch-action: none;
+            height: 100vh; width: 100vw;
+        }
 
-        /* LOADING SYSTEM */
-        #sys-loader { 
-            position: fixed; inset: 0; background: #000; z-index: 1000; 
+        .crt-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 999;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.02) 50%);
+            background-size: 100% 3px;
+        }
+
+        /* WEBCAM */
+        #webcam { 
+            position: absolute; bottom: 85px; right: 20px; width: 120px; 
+            border-radius: 12px; border: 3px solid white; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            transform: scaleX(-1); z-index: 50; opacity: 0; transition: opacity 0.5s;
+        }
+
+        #game-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; }
+
+        /* WII MENU CONTAINER */
+        .wii-container {
+            display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+            height: 100%; width: 100%; position: relative; z-index: 20; padding: 20px 0;
+        }
+
+        /* HEADER */
+        .wii-header {
+            width: 90%; display: flex; justify-content: center; align-items: center;
+            border-bottom: 1px solid #ccc; padding-bottom: 10px; margin-bottom: 10px;
+        }
+        .wii-title { font-weight: bold; color: #888; font-size: 1.2rem; letter-spacing: 1px; }
+
+        /* GRID DE CANAIS (CORRIGIDO PARA NÃO ESMAGAR) */
+        .channel-grid {
+            display: grid; 
+            /* Define colunas fixas ou flexíveis que mantêm proporção */
+            grid-template-columns: repeat(2, 1fr); 
+            gap: 15px;
+            width: 90%; max-width: 800px;
+            padding: 10px;
+            overflow-y: auto; /* Permite scroll se necessário em telas pequenas */
+        }
+
+        /* Media query para telas maiores (Desktop/Tablet) */
+        @media (min-width: 768px) {
+            .channel-grid { grid-template-columns: repeat(4, 1fr); }
+        }
+
+        .channel {
+            background: white;
+            aspect-ratio: 16/10; /* Garante que o cartão seja retangular perfeito */
+            border-radius: 15px;
+            border: 1px solid #ddd;
+            box-shadow: 2px 2px 10px rgba(0,0,0,0.05), inset 0 0 30px rgba(240,240,240,0.5);
             display: flex; flex-direction: column; align-items: center; justify-content: center;
-            transition: opacity 0.5s;
+            cursor: pointer; position: relative; overflow: hidden;
+            transition: all 0.2s ease;
         }
-        .spinner { width: 40px; height: 40px; border: 4px solid var(--sys-blue); border-top-color: transparent; border-radius: 50%; animation: rot 1s infinite linear; }
-        @keyframes rot { to { transform: rotate(360deg); } }
 
-        /* CRT SCANLINES */
-        .scanlines {
-            position: fixed; inset: 0; pointer-events: none; z-index: 999;
-            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%);
-            background-size: 100% 4px; opacity: 0.6;
+        .channel:hover {
+            transform: scale(1.05);
+            border-color: var(--wii-blue);
+            box-shadow: 0 0 0 4px rgba(88, 180, 232, 0.3);
         }
+
+        .channel-icon { font-size: 3.5rem; margin-bottom: 8px; filter: drop-shadow(0 2px 2px rgba(0,0,0,0.1)); }
+        .channel-title { 
+            font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; color: #777; 
+            font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
+        }
+
+        /* FOOTER BAR */
+        .wii-footer {
+            width: 90%; max-width: 600px; height: 60px;
+            background: #fff; border: 1px solid #ccc; border-radius: 30px;
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0 30px; margin-bottom: 20px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        }
+
+        .wii-oval-btn {
+            background: #f0f0f0; border: 1px solid #ccc; padding: 8px 25px;
+            border-radius: 20px; font-weight: bold; color: #666; cursor: pointer;
+            font-size: 0.9rem; transition: background 0.2s;
+        }
+        .wii-oval-btn:hover { background: #e0e0e0; }
+
+        .clock { font-size: 1.5rem; color: #888; font-weight: 300; }
+
+        /* LOADING & UTILS */
+        #loading { background: white; z-index: 1000; position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+        .hidden { display: none !important; }
+
+        /* HUD JOGO */
+        #game-ui { pointer-events: none; }
+        #game-ui > * { pointer-events: auto; }
+        
+        #game-msg {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-family: 'Russo One'; font-size: 60px; color: #fff;
+            text-shadow: 0 4px 0 #000, 0 0 20px rgba(0,0,0,0.5);
+            width: 100%; text-align: center; pointer-events: none;
+        }
+
+        /* Botão Home/Sair Estilo Wii */
+        .home-btn {
+            position: fixed; top: 20px; right: 20px;
+            width: 60px; height: 60px; background: white;
+            border-radius: 50%; border: 2px solid #ccc;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.8rem; cursor: pointer; z-index: 100;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            transition: transform 0.1s;
+        }
+        .home-btn:active { transform: scale(0.9); background: #eee; }
     </style>
 </head>
 <body>
-    <div id="console-root">
-        <!-- HARDWARE -->
-        <video id="webcam-feed" autoplay playsinline muted></video>
-        <canvas id="game-canvas"></canvas>
+
+    <video id="webcam" autoplay playsinline muted></video>
+    <div class="crt-overlay"></div>
+    <canvas id="game-canvas"></canvas>
+
+    <div id="loading">
+        <div class="w-12 h-12 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+        <!-- FIX AQUI: Adicionado ID loading-text para evitar erro no core.js -->
+        <p id="loading-text" class="mt-4 text-gray-400 font-bold tracking-widest text-sm">A CARREGAR...</p>
+    </div>
+
+    <!-- MENU PRINCIPAL -->
+    <div id="menu-screen" class="wii-container hidden">
+        <div class="wii-header">
+            <span class="wii-title">thIAguinho Wii</span>
+        </div>
+
+        <div class="channel-grid" id="channel-grid">
+            <!-- Canais Inseridos via JS -->
+        </div>
+
+        <div class="wii-footer">
+            <div class="wii-oval-btn" onclick="window.System.msg('PERFIL: ' + window.System.playerId)">Wii</div>
+            <div class="clock" id="clock">12:00</div>
+            <div class="wii-oval-btn" onclick="location.reload()">Start</div>
+        </div>
         
-        <!-- VISUAL FX -->
-        <div class="scanlines"></div>
-
-        <!-- USER INTERFACE -->
-        <div id="ui-layer"></div>
-
-        <!-- SYSTEM LOADER -->
-        <div id="sys-loader">
-            <div class="spinner"></div>
-            <p style="color:white; margin-top:20px; font-family:'Russo One'; letter-spacing:1px;">INITIALIZING KERNEL...</p>
+        <div style="position: absolute; bottom: 10px; right: 20px; font-size: 0.7rem; color: #bbb;">
+            NET: <span id="net-status" style="color: #999;">OFFLINE</span>
         </div>
     </div>
 
-    <!-- CORE KERNEL SCRIPT (Unified) -->
-    <script type="module">
-        // ==========================================
-        // MODULE: STATE MANAGEMENT
-        // ==========================================
-        const State = {
-            user: {
-                id: null, 
-                name: 'Player 1',
-                avatarColor: '#58b4e8',
-                coins: 0
-            },
-            
-            settings: {
-                volume: 0.8,
-                motionSensitivity: 1.0,
-                showDebugCamera: false
-            },
-
-            setUser: (data) => {
-                State.user = { ...State.user, ...data };
-                State.persist();
-            },
-
-            setSettings: (data) => {
-                State.settings = { ...State.settings, ...data };
-                const cam = document.getElementById('webcam-feed');
-                if(cam) cam.style.opacity = State.settings.showDebugCamera ? '0.5' : '0';
-                State.persist();
-            },
-
-            persist: () => {
-                localStorage.setItem('THIAGUINHO_WII_DATA', JSON.stringify({
-                    user: State.user,
-                    settings: State.settings
-                }));
-            },
-
-            load: () => {
-                const data = localStorage.getItem('THIAGUINHO_WII_DATA');
-                if (data) {
-                    try {
-                        const parsed = JSON.parse(data);
-                        State.user = parsed.user || State.user;
-                        State.settings = parsed.settings || State.settings;
-                    } catch(e) { console.error("Data load error", e); }
-                }
-            }
-        };
-        State.load();
-
-        // ==========================================
-        // MODULE: KART ASSETS
-        // ==========================================
-        const KART_CONSTANTS = {
-            LANES: 3,
-            ROAD_WIDTH: 2000,
-            SEGMENT_LENGTH: 200,
-            DRAW_DISTANCE: 300,
-            FOV: 100,
-            CAMERA_HEIGHT: 1000,
-            MAX_SPEED: 12000,
-            ACCEL: 4000,
-            BREAKING: -8000,
-            DECEL: -2000,
-            OFFROAD_DECEL: -6000,
-            OFFROAD_LIMIT: 2000,
-            CENTRIFUGAL: 0.3
-        };
-
-        const KART_COLORS = {
-            SKY:  ['#72D7EE', '#000033'], 
-            GRASS: { light: '#10AA10', dark: '#009A00' },
-            RUMBLE: { light: '#555555', dark: '#BBBBBB' },
-            ROAD: { light: '#6B6B6B', dark: '#636363' }
-        };
-
-        const KART_CHARACTERS = [
-            { id: 0, name: 'Mario-like', color: '#e74c3c', speed: 1.0, turn: 1.0 },
-            { id: 1, name: 'Luigi-like', color: '#2ecc71', speed: 0.95, turn: 1.1 },
-            { id: 2, name: 'Peach-like', color: '#e91e63', speed: 0.9, turn: 1.3 }
-        ];
-
-        // ==========================================
-        // MODULE: KART TRACK SYSTEM
-        // ==========================================
-        class TrackSystem {
-            constructor() {
-                this.segments = [];
-                this.trackLength = 0;
-            }
-
-            build(trackId) {
-                this.segments = [];
-                const length = 2000; 
-                
-                for (let i = 0; i < length; i++) {
-                    const p1 = { world: { z: i * KART_CONSTANTS.SEGMENT_LENGTH }, camera: {}, screen: {} };
-                    const p2 = { world: { z: (i + 1) * KART_CONSTANTS.SEGMENT_LENGTH }, camera: {}, screen: {} };
-                    
-                    let curve = 0;
-                    let y = 0;
-
-                    if (i > 200 && i < 400) curve = 2; 
-                    if (i > 600 && i < 900) curve = -3; 
-                    if (i > 1000 && i < 1200) y = Math.sin(i * 0.1) * 1000; 
-
-                    this.segments.push({
-                        index: i,
-                        p1: p1,
-                        p2: p2,
-                        curve: curve,
-                        y: y,
-                        color: Math.floor(i / 3) % 2 ? 'dark' : 'light',
-                        sprites: [] 
-                    });
-                }
-
-                this.trackLength = this.segments.length * KART_CONSTANTS.SEGMENT_LENGTH;
-                this.segments[10].sprites.push({ type: 'CHECKPOINT' });
-            }
-
-            findSegment(z) {
-                return this.segments[Math.floor(z / KART_CONSTANTS.SEGMENT_LENGTH) % this.segments.length];
-            }
-
-            project(p, cameraX, cameraY, cameraZ, cameraDepth, width, height, roadWidth) {
-                p.camera.x = (p.world.x || 0) - cameraX;
-                p.camera.y = (p.world.y || 0) - cameraY;
-                p.camera.z = (p.world.z || 0) - cameraZ;
-                
-                if (p.camera.z < 0) p.camera.z += this.trackLength;
-
-                p.screen.scale = cameraDepth / p.camera.z;
-                p.screen.x = Math.round((width / 2) + (p.screen.scale * p.camera.x * width / 2));
-                p.screen.y = Math.round((height / 2) - (p.screen.scale * p.camera.y * height / 2));
-                p.screen.w = Math.round((p.screen.scale * roadWidth * width / 2));
-            }
-
-            render(ctx, width, height, playerZ, playerX, cameraY) {
-                const baseSegment = this.findSegment(playerZ);
-                const basePercent = (playerZ % KART_CONSTANTS.SEGMENT_LENGTH) / KART_CONSTANTS.SEGMENT_LENGTH;
-                const cameraDepth = 1 / Math.tan((KART_CONSTANTS.FOV / 2) * Math.PI / 180);
-                
-                let dx = -(baseSegment.curve * basePercent);
-                let x = 0;
-                let maxY = height;
-
-                for (let n = 0; n < KART_CONSTANTS.DRAW_DISTANCE; n++) {
-                    const segment = this.segments[(baseSegment.index + n) % this.segments.length];
-                    const looped = segment.index < baseSegment.index;
-                    const camZ = playerZ - (looped ? this.trackLength : 0);
-
-                    this.project(segment.p1, (playerX * KART_CONSTANTS.ROAD_WIDTH) - x, cameraY + segment.y, camZ, cameraDepth, width, height, KART_CONSTANTS.ROAD_WIDTH);
-                    this.project(segment.p2, (playerX * KART_CONSTANTS.ROAD_WIDTH) - x - dx, cameraY + segment.y, camZ, cameraDepth, width, height, KART_CONSTANTS.ROAD_WIDTH);
-
-                    x += dx;
-                    dx += segment.curve;
-
-                    if (segment.p1.camera.z <= cameraDepth || segment.p2.screen.y >= maxY || segment.p2.screen.y >= segment.p1.screen.y) {
-                        continue;
-                    }
-
-                    this.drawSegment(ctx, width, height, segment);
-                    maxY = segment.p1.screen.y;
-                }
-            }
-
-            drawSegment(ctx, width, height, seg) {
-                const grass = seg.color === 'dark' ? KART_COLORS.GRASS.dark : KART_COLORS.GRASS.light;
-                const rumble = seg.color === 'dark' ? KART_COLORS.RUMBLE.dark : KART_COLORS.RUMBLE.light;
-                const road = seg.color === 'dark' ? KART_COLORS.ROAD.dark : KART_COLORS.ROAD.light;
-
-                const x1 = seg.p1.screen.x, y1 = seg.p1.screen.y, w1 = seg.p1.screen.w;
-                const x2 = seg.p2.screen.x, y2 = seg.p2.screen.y, w2 = seg.p2.screen.w;
-
-                ctx.fillStyle = grass;
-                ctx.fillRect(0, y2, width, y1 - y2);
-
-                ctx.fillStyle = rumble;
-                ctx.beginPath();
-                ctx.moveTo(x1 - w1 * 1.2, y1);
-                ctx.lineTo(x2 - w2 * 1.2, y2);
-                ctx.lineTo(x2 + w2 * 1.2, y2);
-                ctx.lineTo(x1 + w1 * 1.2, y1);
-                ctx.fill();
-
-                ctx.fillStyle = road;
-                ctx.beginPath();
-                ctx.moveTo(x1 - w1, y1);
-                ctx.lineTo(x2 - w2, y2);
-                ctx.lineTo(x2 + w2, y2);
-                ctx.lineTo(x1 + w1, y1);
-                ctx.fill();
-            }
-        }
-
-        // ==========================================
-        // MODULE: KART PLAYER
-        // ==========================================
-        class Player {
-            constructor(charId) {
-                this.x = 0; 
-                this.z = 0; 
-                this.speed = 0;
-                this.steer = 0; 
-                
-                this.maxSpeed = KART_CONSTANTS.MAX_SPEED;
-                this.accel = KART_CONSTANTS.ACCEL;
-                this.turnSpeed = 2.0;
-                
-                this.throttle = false;
-                this.brake = false;
-            }
-
-            update(dt, pose, trackLength, currentCurve) {
-                if (pose && pose.keypoints) {
-                    this.handlePoseInput(pose);
-                } else {
-                    // Fallback para teclado se não houver pose
-                    this.handleKeyboardInput();
-                }
-
-                if (this.throttle) {
-                    this.speed += this.accel * dt;
-                } else if (this.brake) {
-                    this.speed += KART_CONSTANTS.BREAKING * dt;
-                } else {
-                    this.speed += KART_CONSTANTS.DECEL * dt;
-                }
-
-                this.speed = Math.max(0, Math.min(this.speed, this.maxSpeed));
-
-                if (this.speed > 0) {
-                    const turnFactor = (this.speed / this.maxSpeed);
-                    this.x += this.steer * this.turnSpeed * turnFactor * dt;
-                    this.x -= currentCurve * KART_CONSTANTS.CENTRIFUGAL * turnFactor * dt;
-                }
-
-                if ((this.x < -1 || this.x > 1) && this.speed > KART_CONSTANTS.OFFROAD_LIMIT) {
-                    this.speed += KART_CONSTANTS.OFFROAD_DECEL * dt;
-                }
-
-                this.z += this.speed * dt;
-                if (this.z >= trackLength) this.z -= trackLength;
-                if (this.z < 0) this.z += trackLength;
-            }
-
-            handlePoseInput(pose) {
-                const kp = pose.keypoints;
-                const leftShoulder = kp.find(k => k.name === 'left_shoulder');
-                const rightShoulder = kp.find(k => k.name === 'right_shoulder');
-                const leftWrist = kp.find(k => k.name === 'left_wrist');
-                const rightWrist = kp.find(k => k.name === 'right_wrist');
-
-                if (!leftShoulder || !rightShoulder || leftShoulder.score < 0.3 || rightShoulder.score < 0.3) return;
-
-                const dy = rightShoulder.y - leftShoulder.y;
-                this.steer = dy * 5.0; 
-                
-                if (this.steer > 1) this.steer = 1;
-                if (this.steer < -1) this.steer = -1;
-                if (Math.abs(this.steer) < 0.1) this.steer = 0;
-
-                if (leftWrist && rightWrist) {
-                    const shouldersY = (leftShoulder.y + rightShoulder.y) / 2;
-                    const wristsY = (leftWrist.y + rightWrist.y) / 2;
-
-                    if (wristsY < shouldersY - 0.1) {
-                        this.brake = true;
-                        this.throttle = false;
-                    } else {
-                        this.brake = false;
-                        this.throttle = true;
-                    }
-                } else {
-                    this.throttle = true;
-                }
-            }
-
-            handleKeyboardInput() {
-                // Hook simples para teclado
-                this.throttle = false; 
-                this.brake = false;
-                this.steer = 0;
-                
-                // Variáveis globais injetadas pelo System se necessário, mas aqui usando padrão
-                // Assume que System.inputState é atualizado (adicionaremos isso no System)
-                if(window.InputState) {
-                    if(window.InputState.ArrowUp) this.throttle = true;
-                    if(window.InputState.ArrowDown) this.brake = true;
-                    if(window.InputState.ArrowLeft) this.steer = -1;
-                    if(window.InputState.ArrowRight) this.steer = 1;
-                }
-            }
-
-            draw(ctx, width, height, color) {
-                const bounce = (this.speed / this.maxSpeed) * Math.sin(Date.now() / 50) * 5;
-                const x = width / 2;
-                const y = height - 100 + bounce;
-                const kartScale = 0.6;
-
-                ctx.save();
-                ctx.translate(x, y);
-                ctx.rotate(this.steer * 0.5);
-
-                ctx.fillStyle = color;
-                ctx.beginPath();
-                ctx.moveTo(-50 * kartScale, 0);
-                ctx.lineTo(50 * kartScale, 0);
-                ctx.lineTo(40 * kartScale, -40 * kartScale);
-                ctx.lineTo(-40 * kartScale, -40 * kartScale);
-                ctx.fill();
-
-                ctx.fillStyle = '#222';
-                ctx.fillRect(-60 * kartScale, -10 * kartScale, 20 * kartScale, 40 * kartScale);
-                ctx.fillRect(40 * kartScale, -10 * kartScale, 20 * kartScale, 40 * kartScale);
-
-                ctx.fillStyle = '#fff';
-                ctx.beginPath();
-                ctx.arc(0, -50 * kartScale, 20 * kartScale, 0, Math.PI * 2);
-                ctx.fill();
-
-                ctx.restore();
-            }
-        }
-
-        // ==========================================
-        // MODULE: KART AI
-        // ==========================================
-        class Bot {
-            constructor(config) {
-                this.id = config.id;
-                this.x = config.x || 0; 
-                this.z = config.z || 0; 
-                this.color = config.color || '#bdc3c7';
-                this.speed = config.speed || 10000;
-                this.maxSpeed = config.speed || 11000;
-                this.name = config.name || 'CPU';
-                
-                this.turnSpeed = 1.5;
-                this.aggression = Math.random(); 
-                this.lanePreference = (Math.random() * 2) - 1; 
-            }
-
-            update(dt, trackLength, currentCurve) {
-                this.speed += 100 * dt; 
-                if (this.speed > this.maxSpeed) this.speed = this.maxSpeed;
-
-                const targetX = this.lanePreference - (currentCurve * 0.5); 
-                
-                if (this.x < targetX) this.x += this.turnSpeed * dt;
-                if (this.x > targetX) this.x -= this.turnSpeed * dt;
-
-                this.x -= currentCurve * KART_CONSTANTS.CENTRIFUGAL * (this.speed / KART_CONSTANTS.MAX_SPEED) * dt;
-
-                if (this.x < -1.5) this.x = -1.5;
-                if (this.x > 1.5) this.x = 1.5;
-
-                this.z += this.speed * dt;
-                
-                if (this.z >= trackLength) this.z -= trackLength;
-                if (this.z < 0) this.z += trackLength;
-            }
-        }
-
-        // ==========================================
-        // MODULE: MULTIPLAYER
-        // ==========================================
-        class Multiplayer {
-            constructor() {
-                this.active = false;
-                this.roomId = 'lobby_principal';
-                this.remotePlayers = {}; 
-                this.lastUpdate = 0;
-                this.dbRef = null;
-                this.myId = State.user.id || 'player_' + Math.floor(Math.random()*9999);
-            }
-
-            init() {
-                if (!window.DB) {
-                    console.warn("⚠️ [MULTI] Firebase não disponível. Modo Offline.");
-                    return;
-                }
-
-                console.log(`🌐 [MULTI] Conectando ao Lobby: ${this.roomId}`);
-                this.active = true;
-                this.dbRef = window.DB.ref(`rooms/${this.roomId}/players`);
-
-                this.dbRef.on('value', (snap) => {
-                    const data = snap.val();
-                    if (!data) return;
-                    
-                    Object.keys(data).forEach(key => {
-                        if (key === this.myId) return; 
-
-                        if (!this.remotePlayers[key]) {
-                            this.remotePlayers[key] = {
-                                id: key,
-                                x: data[key].x,
-                                z: data[key].z,
-                                color: data[key].color,
-                                name: data[key].name || 'Rival',
-                                targetX: data[key].x,
-                                targetZ: data[key].z
-                            };
-                        } else {
-                            const p = this.remotePlayers[key];
-                            p.targetX = data[key].x;
-                            p.targetZ = data[key].z;
-                            p.color = data[key].color;
-                        }
-                    });
-
-                    Object.keys(this.remotePlayers).forEach(key => {
-                        if (!data[key]) delete this.remotePlayers[key];
-                    });
-                });
-
-                this.dbRef.child(this.myId).onDisconnect().remove();
-            }
-
-            broadcast(playerObj, charInfo) {
-                if (!this.active) return;
-
-                const now = Date.now();
-                if (now - this.lastUpdate > 100) { 
-                    this.lastUpdate = now;
-                    
-                    this.dbRef.child(this.myId).update({
-                        x: Number(playerObj.x.toFixed(2)),
-                        z: Math.floor(playerObj.z),
-                        speed: Math.floor(playerObj.speed),
-                        color: charInfo.color,
-                        name: State.user.name,
-                        timestamp: firebase.database.ServerValue.TIMESTAMP
-                    });
-                }
-            }
-
-            updateRemotes(dt, trackLength) {
-                Object.values(this.remotePlayers).forEach(p => {
-                    if (p.targetX !== undefined) {
-                        p.x += (p.targetX - p.x) * 5.0 * dt;
-                    }
-
-                    if (p.targetZ !== undefined) {
-                        let diff = p.targetZ - p.z;
-                        if (diff < -trackLength / 2) diff += trackLength;
-                        if (diff > trackLength / 2) diff -= trackLength;
-                        
-                        p.z += diff * 5.0 * dt;
-                        
-                        if (p.z >= trackLength) p.z -= trackLength;
-                        if (p.z < 0) p.z += trackLength;
-                    }
-                });
-            }
-
-            cleanup() {
-                if (this.active && this.dbRef) {
-                    this.dbRef.child(this.myId).remove();
-                    this.dbRef.off();
-                }
-            }
-        }
-
-        // ==========================================
-        // MODULE: KART ENGINE
-        // ==========================================
-        class KartEngine {
-            constructor() {
-                this.Track = new TrackSystem();
-                this.Player = new Player();
-                this.Multiplayer = new Multiplayer();
-                
-                this.bots = [];
-                this.state = 'RACE'; 
-                this.charIdx = 0; 
-            }
-
-            init() {
-                console.log("🏁 [ENGINE] Iniciando Corrida...");
-                
-                this.Track.build(0);
-
-                const char = KART_CHARACTERS[this.charIdx];
-                this.Player.maxSpeed = KART_CONSTANTS.MAX_SPEED * char.speed;
-                this.Player.turnSpeed = 2.0 * char.turn;
-                
-                this.Multiplayer.init();
-
-                this.bots.push(new Bot({ id: 'cpu1', z: 200, x: -0.5, color: '#f1c40f', speed: 10500 }));
-                this.bots.push(new Bot({ id: 'cpu2', z: 400, x: 0.5, color: '#9b59b6', speed: 10800 }));
-
-                console.log("🟢 [ENGINE] Luz Verde!");
-            }
-
-            update(dt, pose) {
-                if (this.state !== 'RACE') return;
-
-                const playerSeg = this.Track.findSegment(this.Player.z);
-                this.Player.update(dt, pose, this.Track.trackLength, playerSeg.curve);
-
-                this.bots.forEach(bot => {
-                    const botSeg = this.Track.findSegment(bot.z);
-                    bot.update(dt, this.Track.trackLength, botSeg.curve);
-                });
-
-                this.Multiplayer.broadcast(this.Player, KART_CHARACTERS[this.charIdx]);
-                this.Multiplayer.updateRemotes(dt, this.Track.trackLength);
-            }
-
-            draw(ctx, w, h) {
-                ctx.fillStyle = KART_COLORS.SKY[0];
-                ctx.fillRect(0, 0, w, h);
-
-                const cameraY = KART_CONSTANTS.CAMERA_HEIGHT + (this.Player.y || 0);
-                
-                this.Track.render(ctx, w, h, this.Player.z, this.Player.x, cameraY);
-                this.drawOpponents(ctx, w, h);
-                this.Player.draw(ctx, w, h, KART_CHARACTERS[this.charIdx].color);
-                this.drawHUD(ctx, w, h);
-            }
-
-            drawOpponents(ctx, w, h) {
-                const allOpponents = [
-                    ...this.bots, 
-                    ...Object.values(this.Multiplayer.remotePlayers)
-                ];
-
-                allOpponents.sort((a, b) => {
-                    let zA = a.z; 
-                    let zB = b.z;
-                    if (zA < this.Player.z) zA += this.Track.trackLength;
-                    if (zB < this.Player.z) zB += this.Track.trackLength;
-                    return zB - zA; 
-                });
-
-                allOpponents.forEach(op => {
-                    let relZ = op.z - this.Player.z;
-                    if (relZ < 0) relZ += this.Track.trackLength;
-
-                    if (relZ > 0 && relZ < KART_CONSTANTS.DRAW_DISTANCE * KART_CONSTANTS.SEGMENT_LENGTH) {
-                        const cameraDepth = 1 / Math.tan((KART_CONSTANTS.FOV / 2) * Math.PI / 180);
-                        const scale = cameraDepth / relZ;
-                        
-                        const screenX = w/2 + (scale * ((op.x - this.Player.x) * KART_CONSTANTS.ROAD_WIDTH) * w/2);
-                        const screenY = h/2 + (scale * KART_CONSTANTS.CAMERA_HEIGHT * h/2) * 0.2; 
-                        
-                        const size = w * scale * 1000; 
-
-                        ctx.fillStyle = op.color || '#555';
-                        ctx.fillRect(screenX - size/2, screenY, size, size * 0.6);
-                        
-                        if(size > 20) {
-                           ctx.fillStyle = '#fff';
-                           ctx.font = `${Math.floor(size/2)}px Arial`;
-                           ctx.textAlign = 'center';
-                           ctx.fillText(op.name || 'CPU', screenX, screenY - 5);
-                        }
-                    }
-                });
-            }
-
-            drawHUD(ctx, w, h) {
-                ctx.fillStyle = 'white';
-                ctx.font = "bold 40px 'Russo One'";
-                ctx.textAlign = 'left';
-                
-                const kmh = Math.floor(this.Player.speed / 100);
-                ctx.fillText(kmh + " KM/H", 20, 50);
-
-                ctx.font = "20px 'Chakra Petch'";
-                ctx.fillText(this.Multiplayer.active ? "ONLINE" : "OFFLINE", 20, 80);
-                
-                if (State.settings.showDebugCamera) {
-                    ctx.fillText("Pose Tracking ON", 20, 110);
-                }
-            }
-
-            resize() { }
-            cleanup() { this.Multiplayer.cleanup(); }
-        }
-
-        // ==========================================
-        // GAME WRAPPERS (Logic switching)
-        // ==========================================
+    <!-- HUD DO JOGO -->
+    <div id="game-ui" class="hidden">
+        <div style="position: fixed; top: 20px; left: 20px; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); padding: 8px 20px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.3);">
+            <span style="color: #ddd; font-size: 0.8rem; font-weight: bold; margin-right: 5px;">SCORE</span>
+            <span id="hud-score" style="color: #fff; font-family: 'Russo One'; font-size: 1.4rem;">0</span>
+        </div>
         
-        // 1. KART WRAPPER
-        const KartGame = {
-            engine: null,
-            init: function() {
-                console.log("🏎️ [KART] Iniciando...");
-                this.engine = new KartEngine();
-                this.engine.init();
-            },
-            cleanup: function() {
-                if (this.engine) this.engine.cleanup();
-            },
-            update: function(dt, pose) {
-                if (this.engine) this.engine.update(dt, pose);
-            },
-            draw: function(ctx, w, h) {
-                if (this.engine) this.engine.draw(ctx, w, h);
-            },
-            resize: function() {
-                if(this.engine) this.engine.resize();
-            }
+        <div id="game-msg"></div>
+
+        <!-- Botão HOME para Sair do Jogo -->
+        <button class="home-btn" onclick="window.System.home()" title="Voltar ao Menu">🏠</button>
+    </div>
+
+    <!-- TELA GAME OVER -->
+    <div id="screen-over" class="wii-container hidden" style="background: rgba(0,0,0,0.92); justify-content: center; color: white;">
+        <h1 style="font-family: 'Russo One'; font-size: 4rem; color: #ff5252; margin-bottom: 10px;">FIM</h1>
+        <div style="background: #333; padding: 20px 40px; border-radius: 15px; border: 1px solid #555; text-align: center;">
+            <p style="color: #aaa; font-size: 0.9rem;">RESULTADO FINAL</p>
+            <span id="final-score" style="font-family: 'Russo One'; font-size: 3rem; color: #ffd740;">0</span>
+        </div>
+        <button class="wii-oval-btn" onclick="window.System.home()" style="margin-top: 30px; font-size: 1.2rem; padding: 12px 40px;">MENU</button>
+    </div>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyB0ThqhfK6xc8P1D4WCkavhdXbb7zIaQJk",
+            authDomain: "thiaguinhowii.firebaseapp.com",
+            databaseURL: "https://thiaguinhowii-default-rtdb.firebaseio.com",
+            projectId: "thiaguinhowii",
+            storageBucket: "thiaguinhowii.firebasestorage.app",
+            messagingSenderId: "63695043126",
+            appId: "1:63695043126:web:abd6a8ba7792313991b697"
         };
-
-        // 2. MENU WRAPPER
-        const MenuGame = {
-            loaded: false,
-            channels: [
-                { id: 'KART', title: 'Kart Channel', color: '#58b4e8', icon: '🏎️' },
-                { id: 'MII', title: 'Mii Channel', color: '#bdc3c7', icon: '👤', disabled: true },
-                { id: 'CONFIG', title: 'Settings', color: '#95a5a6', icon: '⚙️', disabled: true },
-                { id: 'SHOP', title: 'Shop', color: '#f1c40f', icon: '🛒', disabled: true }
-            ],
-            init: function() {
-                console.log("💿 [MENU] Interface Carregada.");
-                this.loaded = true;
-                this.clickHandler = (e) => this.handleClick(e);
-                window.addEventListener('click', this.clickHandler);
-            },
-            cleanup: function() {
-                window.removeEventListener('click', this.clickHandler);
-            },
-            update: function(dt, pose) {},
-            draw: function(ctx, w, h) {
-                ctx.fillStyle = '#ecf0f1';
-                ctx.fillRect(0, 0, w, h);
-
-                const margin = 20;
-                const cols = 4;
-                const cellW = (w - (margin * (cols + 1))) / cols;
-                const cellH = h * 0.4;
-                const startY = h * 0.3;
-
-                this.channels.forEach((ch, i) => {
-                    if(i >= cols) return;
-                    const x = margin + (i * (cellW + margin));
-                    const y = startY;
-
-                    ctx.fillStyle = 'rgba(0,0,0,0.1)';
-                    ctx.fillRect(x + 5, y + 5, cellW, cellH);
-
-                    ctx.fillStyle = ch.disabled ? '#bdc3c7' : '#fff';
-                    ctx.strokeStyle = '#95a5a6';
-                    ctx.lineWidth = 4;
-                    ctx.strokeRect(x, y, cellW, cellH);
-                    ctx.fillRect(x, y, cellW, cellH);
-
-                    ctx.fillStyle = '#2c3e50';
-                    ctx.textAlign = 'center';
-                    ctx.font = '60px Arial';
-                    ctx.fillText(ch.icon, x + cellW/2, y + cellH/2);
-                    
-                    ctx.font = 'bold 20px sans-serif';
-                    ctx.fillText(ch.title, x + cellW/2, y + cellH - 20);
-
-                    ch.rect = { x, y, w: cellW, h: cellH };
-                });
-
-                ctx.fillStyle = '#bdc3c7';
-                ctx.fillRect(0, h - 50, w, 50);
-                ctx.fillStyle = '#fff';
-                ctx.font = '16px sans-serif';
-                ctx.fillText("Clique no Kart Channel para iniciar (Use setas ou câmera)", w/2, h - 20);
-            },
-            handleClick: function(e) {
-                const mx = e.clientX;
-                const my = e.clientY;
-                this.channels.forEach(ch => {
-                    if (ch.rect && mx >= ch.rect.x && mx <= ch.rect.x + ch.rect.w && my >= ch.rect.y && my <= ch.rect.y + ch.rect.h) {
-                        if (ch.id === 'KART' && !ch.disabled) {
-                            Router.load('KART');
-                        }
-                    }
-                });
-            }
-        };
-
-        // ==========================================
-        // MODULE: ROUTER
-        // ==========================================
-        const Router = {
-            activeGame: null,
-            registry: {
-                'MENU': MenuGame,
-                'KART': KartGame
-            },
-            init: () => {
-                console.log("🚀 [ROUTER] Boot executado.");
-                Router.load('MENU');
-            },
-            load: async (gameKey) => {
-                console.log(`📂 [ROUTER] Carregando: ${gameKey}...`);
-                if (Router.activeGame && Router.activeGame.cleanup) {
-                    try { Router.activeGame.cleanup(); } catch (e) { console.warn(e); }
-                }
-                Router.activeGame = null;
-
-                const gameObj = Router.registry[gameKey];
-                if (!gameObj) {
-                    console.error(`❌ ERRO: ${gameKey} não encontrado.`);
-                    return;
-                }
-
-                Router.activeGame = gameObj;
-                if (Router.activeGame.init) Router.activeGame.init();
-                if (window.System && window.System.resize) window.System.resize();
-            }
-        };
-
-        // ==========================================
-        // MODULE: SYSTEM KERNEL
-        // ==========================================
-        const System = {
-            hardware: { video: null, canvas: null, ctx: null, detector: null },
-            runtime: { loopId: null, lastTime: 0, pose: null, isReady: false },
-            config: {
-                firebase: {
-                    apiKey: "AIzaSyB0ThqhfK6xc8P1D4WCkavhdXbb7zIaQJk",
-                    authDomain: "thiaguinhowii.firebaseapp.com",
-                    databaseURL: "https://thiaguinhowii-default-rtdb.firebaseio.com",
-                    projectId: "thiaguinhowii",
-                    storageBucket: "thiaguinhowii.firebasestorage.app",
-                    messagingSenderId: "63695043126",
-                    appId: "1:63695043126:web:abd6a8ba7792313991b697"
-                }
-            },
-
-            boot: async () => {
-                console.log("💿 [SYSTEM] Inicializando Kernel...");
-                
-                System.hardware.video = document.getElementById('webcam-feed');
-                System.hardware.canvas = document.getElementById('game-canvas');
-                System.hardware.ctx = System.hardware.canvas.getContext('2d', { alpha: false });
-                
-                window.addEventListener('resize', System.resize);
-                window.InputState = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
-                window.addEventListener('keydown', (e) => window.InputState[e.key] = true);
-                window.addEventListener('keyup', (e) => window.InputState[e.key] = false);
-
-                System.resize();
-
-                // Firebase Init
-                try {
-                    if(firebase) {
-                        firebase.initializeApp(System.config.firebase);
-                        window.DB = firebase.database();
-                        await firebase.auth().signInAnonymously();
-                        State.setUser({ id: firebase.auth().currentUser.uid });
-                        console.log("🔥 [SYSTEM] Firebase Conectado");
-                    }
-                } catch (e) {
-                    console.error("❌ [SYSTEM] Erro Firebase (Modo Offline Ativo):", e);
-                }
-
-                // AI Init
-                System.initAI();
-
-                // Start
-                Router.init();
-                System.runtime.isReady = true;
-                
-                const loader = document.getElementById('sys-loader');
-                if(loader) {
-                    loader.style.opacity = '0';
-                    setTimeout(() => loader.classList.add('hidden'), 500);
-                }
-
-                System.loop();
-            },
-
-            initAI: async () => {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ 
-                        video: { width: 640, height: 480, frameRate: { ideal: 30 } } 
-                    });
-                    System.hardware.video.srcObject = stream;
-                    await new Promise(r => System.hardware.video.onloadedmetadata = r);
-                    System.hardware.video.play();
-
-                    const model = poseDetection.SupportedModels.MoveNet;
-                    System.hardware.detector = await poseDetection.createDetector(model, { 
-                        modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING 
-                    });
-                    console.log("🧠 [SYSTEM] IA Vision Ativa");
-                    System.poseLoop();
-                } catch (e) {
-                    console.warn("⚠️ [SYSTEM] Sem câmera ou IA:", e);
-                }
-            },
-
-            poseLoop: async () => {
-                if (System.hardware.detector && System.hardware.video.readyState === 4) {
-                    try {
-                        const poses = await System.hardware.detector.estimatePoses(System.hardware.video, {
-                            flipHorizontal: true
-                        });
-                        if (poses.length > 0) System.runtime.pose = poses[0];
-                    } catch (e) { }
-                }
-                requestAnimationFrame(System.poseLoop);
-            },
-
-            loop: (timestamp) => {
-                const dt = (timestamp - System.runtime.lastTime) / 1000 || 0.016;
-                System.runtime.lastTime = timestamp;
-
-                const w = System.hardware.canvas.width;
-                const h = System.hardware.canvas.height;
-
-                System.hardware.ctx.fillStyle = '#111';
-                System.hardware.ctx.fillRect(0, 0, w, h);
-
-                if (Router.activeGame) {
-                    Router.activeGame.update(dt, System.runtime.pose);
-                    Router.activeGame.draw(System.hardware.ctx, w, h);
-                }
-
-                System.runtime.loopId = requestAnimationFrame(System.loop);
-            },
-
-            resize: () => {
-                if (System.hardware.canvas) {
-                    System.hardware.canvas.width = window.innerWidth;
-                    System.hardware.canvas.height = window.innerHeight;
-                    if(Router.activeGame && Router.activeGame.resize) Router.activeGame.resize();
+        try {
+            if (typeof firebase !== 'undefined') {
+                firebase.initializeApp(firebaseConfig);
+                window.DB = firebase.database();
+                const statusEl = document.getElementById('net-status');
+                if(statusEl) {
+                    statusEl.innerHTML = "ONLINE 🟢";
+                    statusEl.style.color = "#4caf50";
                 }
             }
-        };
+        } catch (e) { console.error("Erro Firebase", e); }
+    </script>
 
-        // EXPOSE SYSTEM GLOBAL
-        window.System = System;
-        window.Router = Router; // For debug
-        window.onload = System.boot;
+    <script src="js/core.js"></script>
+    <script src="js/game_kart.js"></script>
+    <script src="js/game_run.js"></script>
+    <script src="js/game_box.js"></script>
+    <script src="js/game_tennis.js"></script>
+
+    <script>
+        setInterval(() => {
+            const now = new Date();
+            const el = document.getElementById('clock');
+            if(el) el.innerText = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }, 1000);
     </script>
 </body>
 </html>
