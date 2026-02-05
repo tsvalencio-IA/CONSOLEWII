@@ -1,142 +1,94 @@
 // =============================================================================
-// PRO BOXING LEAGUE: PLAYSTATION 2 EDITION
-// ARQUITETO: CODE 177
-// VERSÃO: 2.1 (Fix Syntax Error & Stability)
+// PRO BOXING LEAGUE: PLATINUM EDITION (MULTIPLAYER + CPU AI)
+// ARQUITETO: ENGENHARIA SÊNIOR V4.0 - FULL GAMEPLAY UPDATE
 // =============================================================================
 
 (function() {
     let particles = [];
-    let popups = [];
 
-    // Configurações Globais
+    // --- CONFIGURAÇÕES DE ALTO NÍVEL ---
     const CONF = {
-        GAME_DURATION: 120, // 2 minutos em segundos
-        TARGET_SPAWN_RATE: 700, // ms entre alvos
-        GRAVITY: 0.6,
-        DRAG: 0.95,          // Resistência do ar (física)
-        HIT_STOP_MS: 120,    // Tempo que o jogo "congela" no impacto (Game Feel)
-        CAMERA_SMOOTH: 0.1,  // Suavização da câmera
+        GRAVITY: 0.8,
+        DRAG: 0.92,          
+        HIT_STOP_HEAVY: 150, 
+        HIT_STOP_LIGHT: 60,
+        CAMERA_SMOOTH: 0.08, 
         
-        // Configuração de Detecção de Socos (Intenção)
+        // Física de Soco
         PUNCH: {
-            MIN_VELOCITY: 12,    // Velocidade mínima para armar o soco
-            MIN_ACCEL: 4,        // Aceleração necessária para "explodir" o soco
-            MAX_EXTENSION: 0.9,  // % do braço esticado para contar como impacto máximo
-            COOLDOWN: 15         // Frames entre socos
+            MIN_VEL: 15,     
+            COOLDOWN: 12
         },
 
-        // Arquétipos de Lutadores (Estilo PlayStation 2)
+        // Lutadores (Estilo Mario Strikers / PS2)
         CHARS: {
             'balanced': { 
                 name: 'RED PLUMBER', 
-                color: '#e74c3c', hat: '#c0392b', skin: '#ffccaa', 
-                mass: 1.0, power: 10, speed: 1.0, reach: 1.0, stamina_cost: 15 
+                colors: { main: '#c0392b', sub: '#e74c3c', skin: '#ffccaa', glow: '#ff5555' },
+                stats: { mass: 1.0, power: 12, speed: 1.0 }
             },
             'speed': { 
                 name: 'GREEN GHOST', 
-                color: '#2ecc71', hat: '#27ae60', skin: '#ffccaa', 
-                mass: 0.8, power: 7, speed: 1.3, reach: 1.2, stamina_cost: 10 
+                colors: { main: '#27ae60', sub: '#2ecc71', skin: '#ffccaa', glow: '#55ff55' },
+                stats: { mass: 0.8, power: 8, speed: 1.4 }
             },
             'power': { 
                 name: 'BAD GARLIC', 
-                color: '#f1c40f', hat: '#f39c12', skin: '#eebefa', 
-                mass: 1.5, power: 18, speed: 0.7, reach: 0.8, stamina_cost: 25 
-            },
-            'boss': { 
-                name: 'KING TURTLE', 
-                color: '#27ae60', hat: '#e67e22', skin: '#f1c40f', 
-                mass: 2.0, power: 25, speed: 0.5, reach: 1.1, stamina_cost: 35 
+                colors: { main: '#f39c12', sub: '#f1c40f', skin: '#eebefa', glow: '#ffff55' },
+                stats: { mass: 1.6, power: 22, speed: 0.6 }
             }
         }
     };
 
-    // --- UTILITÁRIOS MATEMÁTICOS ---
-    const MathUtils = {
+    // --- MATH UTILS ---
+    const M = {
         lerp: (a, b, t) => a + (b - a) * t,
-        dist: (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y),
-        clamp: (val, min, max) => Math.min(Math.max(val, min), max),
-        // Produto escalar para saber alinhamento de vetores
-        dot: (v1, v2) => v1.x * v2.x + v1.y * v2.y,
-        // Projeção Pseudo-3D (Escala baseada no Y)
-        getScale: (y, height) => 0.6 + (y / height) * 0.6
+        dist: (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y)
     };
 
-    // --- ENGINE PRINCIPAL ---
     const Logic = {
-        // Estado Global
-        state: 'INTRO', // INTRO, SELECT, FIGHT, ROUND_OVER, RESULT
+        state: 'SELECT', // SELECT, FIGHT, KO
         mode: 'SOLO',
         
-        // Variáveis de Jogo
         frame: 0,
-        time: 90,
-        hitStopTimer: 0, // Contador para congelar o jogo
+        hitStop: 0,
         
-        // Câmera Virtual
-        camera: { x: 0, y: 0, zoom: 1, shakeX: 0, shakeY: 0 },
+        // Câmera
+        cam: { x: 0, y: 0, z: 1, shake: 0 },
         
-        // Dados do Jogador Local
-        myCharKey: 'balanced',
+        // Jogador Local
+        myChar: 'balanced',
         player: {
             hp: 100, maxHp: 100,
-            stamina: 100, maxStamina: 100,
-            guard: 100, // Escudo que regenera
-            pose: null, // Pose atual suavizada
-            rawPose: null, // Pose crua da câmera
-            // Física de soco
-            hands: { 
-                l: { state: 'IDLE', vel: {x:0, y:0}, pos: {x:0, y:0} }, 
-                r: { state: 'IDLE', vel: {x:0, y:0}, pos: {x:0, y:0} } 
-            }
+            pose: null, 
+            hands: { l: {x:0,y:0,state:0}, r: {x:0,y:0,state:0} }
         },
 
-        // Inimigo (AI, Saco ou Player Remoto)
+        // Oponente (CPU ou Rede)
         rival: {
             id: null,
             hp: 100,
-            pose: null, // Pose recebida da rede
-            charKey: 'balanced',
-            lastHitId: 0
+            pose: null, // Pose real ou simulada
+            char: 'power',
+            visX: 0, visY: 0,
+            // Variáveis da IA
+            aiState: 0, aiTimer: 0, aiHands: { l:{x:0,y:0}, r:{x:0,y:0} }
         },
-        // Objeto Físico: Saco de Pancada (Pêndulo)
-        bag: {
-            x: 0, y: 0, 
-            angle: 0, 
-            angVel: 0, 
-            len: 200,
-            mass: 20
-        },
-
-        // Sistema de Partículas e Textos Flutuantes
-        effects: [],
 
         // Multiplayer
-        roomId: 'pro_arena_01',
+        roomId: 'boxing_arena_v1',
         isOnline: false,
         dbRef: null,
-        lastSync: 0,
 
-        // =========================================================================
-        // CICLO DE VIDA E INICIALIZAÇÃO
-        // =========================================================================
+        // =====================================================================
+        // INIT & SETUP
+        // =====================================================================
         init: function() {
-            this.resetGame();
-            window.System.msg("PRO BOXING LEAGUE 2.0");
-            // Sons pré-carregados (se disponíveis no sistema host)
-            this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        },
-
-        resetGame: function() {
             this.state = 'SELECT';
             this.player.hp = 100;
-            this.player.stamina = 100;
-            this.effects = [];
-            this.hitStopTimer = 0;
+            particles = [];
             this.disconnect();
-            
-            // Inicializa posição das mãos para evitar vetor zero
-            this.player.hands.l.pos = {x:0,y:0};
-            this.player.hands.r.pos = {x:0,y:0};
+            window.System.msg("FIGHT NIGHT");
         },
 
         disconnect: function() {
@@ -144,787 +96,577 @@
                 try {
                     window.DB.ref(`rooms/${this.roomId}/players/${window.System.playerId}`).remove();
                     window.DB.ref(`rooms/${this.roomId}`).off();
-                } catch(e) {}
+                } catch(e){}
             }
             this.isOnline = false;
         },
 
         startGame: function(mode) {
             this.mode = mode;
-            this.time = 99;
             this.player.hp = 100;
             this.rival.hp = 100;
             this.state = 'FIGHT';
             
             if (mode === 'VERSUS') {
-                if (!window.DB) {
-                    window.System.msg("OFFLINE - MODO TREINO ATIVADO");
-                    this.mode = 'SOLO';
-                } else {
+                if (window.DB) {
                     this.isOnline = true;
                     this.connectNet();
+                } else {
+                    window.System.msg("OFFLINE - VS CPU");
+                    this.mode = 'SOLO'; // Fallback para CPU
                 }
-            } else {
-                // Configura Saco de Pancada
-                this.bag.x = 0; // Centro (relativo à câmera)
-                this.bag.y = -100;
-                this.bag.angle = 0;
-                this.bag.angVel = 0;
             }
-            window.Sfx.click(); // Som genérico de start
+            
+            if (this.mode === 'SOLO') {
+                // Inicia Pose da IA
+                this.rival.char = 'power'; // CPU é o vilão
+            }
+            
+            window.Sfx.play(600, 'square', 0.5, 0.1); 
         },
 
-        // =========================================================================
-        // LÓGICA DE UPDATE (100% GAME LOOP)
-        // =========================================================================
+        // =====================================================================
+        // GAME LOOP (UPDATE)
+        // =====================================================================
         update: function(ctx, w, h, rawPose) {
             this.frame++;
 
-            // 1. INPUT HANDLING & SMOOTHING (Filtro passa-baixa)
+            // 1. INPUT & SMOOTHING 
             if (rawPose && rawPose.keypoints) {
-                this.player.rawPose = rawPose;
-                if (!this.player.pose) {
-                    this.player.pose = JSON.parse(JSON.stringify(rawPose)); // Primeira cópia
-                } else {
-                    // Interpolação forte para suavizar o "jitter" da webcam
+                if (!this.player.pose) this.player.pose = rawPose;
+                else {
                     this.player.pose.keypoints.forEach((kp, i) => {
                         const raw = rawPose.keypoints[i];
-                        if (raw.score > 0.3) {
-                            kp.x = MathUtils.lerp(kp.x, raw.x, 0.4);
-                            kp.y = MathUtils.lerp(kp.y, raw.y, 0.4);
-                            kp.score = raw.score;
+                        if (raw.score > 0.4) { 
+                            kp.x = M.lerp(kp.x, raw.x, 0.5);
+                            kp.y = M.lerp(kp.y, raw.y, 0.5);
                         }
                     });
                 }
             }
+
             // 2. STATE MACHINE
-            if (this.state === 'SELECT') {
-                this.updateSelect(w, h);
-                this.drawSelect(ctx, w, h);
+            if (this.state === 'SELECT') { this.drawSelect(ctx, w, h); return 100; }
+            if (this.state === 'KO') { this.drawKO(ctx, w, h); return 0; }
+
+            // 3. HIT STOP
+            if (this.hitStop > 0) {
+                this.hitStop -= 16;
+                this.cam.shake = (Math.random()-0.5) * 15; 
+                this.drawGame(ctx, w, h);
                 return this.player.hp;
             }
+            this.cam.shake *= 0.8; 
 
-            if (this.state === 'RESULT') {
-                this.drawResult(ctx, w, h);
-                return this.player.hp;
-            }
-
-            // 3. HIT STOP (Congelamento de impacto)
-            if (this.hitStopTimer > 0) {
-                this.hitStopTimer -= 16; // Assume ~60fps
-                // Tremor de câmera durante hitstop
-                this.camera.shakeX = (Math.random() - 0.5) * 15;
-                this.camera.shakeY = (Math.random() - 0.5) * 15;
-                this.drawGame(ctx, w, h); // Desenha frame congelado
-                return this.player.hp;
-            } else {
-                // Decaimento do shake
-                this.camera.shakeX *= 0.8;
-                this.camera.shakeY *= 0.8;
-            }
-
-            // 4. FÍSICA E LÓGICA DE COMBATE
-            this.updatePhysics(w, h);
-            this.updateStamina();
+            // 4. PHYSICS ENGINE
+            this.updatePlayerPhysics(w, h);
             
-            // Modo Específico
-            if (this.mode === 'SOLO') this.updateBagPhysics();
+            if (this.mode === 'SOLO') this.updateAI(w, h); // ATUALIZA A CPU
             if (this.isOnline) this.updateNet();
 
-            // 5. RENDERIZAÇÃO
+            // 5. RENDER
             this.updateCamera(w, h);
             this.drawGame(ctx, w, h);
 
-            // Checa fim de luta
-            if ((this.player.hp <= 0 || this.rival.hp <= 0) && this.state === 'FIGHT') {
-                this.state = 'RESULT';
+            // Check End
+            if (this.player.hp <= 0 || this.rival.hp <= 0) {
+                this.state = 'KO';
                 const win = this.player.hp > 0;
-                window.System.msg(win ? "VITÓRIA!" : "K.O.");
-                if (win) this.spawnConfetti(w/2, h/2);
+                window.System.msg(win ? "VENCEDOR!" : "NOCAUTEADO!");
             }
 
             return this.player.hp;
         },
-        // --- SISTEMA DE FÍSICA DE SOCO (INTENÇÃO) ---
-        updatePhysics: function(w, h) {
-            if (!this.player.pose) return;
 
-            const charStats = CONF.CHARS[this.player.myCharKey];
-            const getKp = (name) => {
-                const k = this.player.pose.keypoints.find(p => p.name === name);
-                // Mapeia coordenadas normalizadas para espaço do jogo (-w/2 a w/2)
-                return k ? { 
-                    x: (1 - k.x/640) * w - w/2, // Inverte X (espelho) e centraliza
-                    y: (k.y/480) * h - h/2 
-                } : {x:0,y:0};
+        // --- LÓGICA DA IA (CPU) ---
+        updateAI: function(w, h) {
+            const r = this.rival;
+            
+            // Simula respiração (Idle animation)
+            const t = this.frame * 0.05;
+            const breathe = Math.sin(t) * 10;
+            const sway = Math.cos(t * 0.5) * 20;
+
+            // Gera uma pose falsa para a CPU baseada em matemática
+            // Centralizada na tela, espelhada
+            const cx = w/2 + sway; 
+            const cy = h/2 + breathe;
+
+            // Define posições base
+            const head = { x: cx, y: cy - 100 };
+            const lSh = { x: cx - 60, y: cy };
+            const rSh = { x: cx + 60, y: cy };
+            
+            // Lógica de ataque da CPU
+            r.aiTimer++;
+            if (r.aiTimer > 60 && Math.random() < 0.05) {
+                // Soco aleatório
+                r.aiState = Math.random() > 0.5 ? 1 : 2; // 1=Esq, 2=Dir
+                r.aiTimer = 0;
+            }
+
+            // Animação dos punhos da CPU
+            const punchExt = 150; // Extensão do soco
+            
+            // Mão Esquerda (CPU)
+            let targetLX = lSh.x; let targetLY = lSh.y + 80; // Guarda
+            if (r.aiState === 1) { // Socando
+                targetLX = lSh.x + 50; targetLY = lSh.y + punchExt; // Soco pra frente (na direção da câmera)
+                // Verifica se acertou o player (Colisão simples)
+                if (r.aiTimer === 10) this.damagePlayer(10); // Dano no frame 10
+            }
+            r.aiHands.l.x = M.lerp(r.aiHands.l.x, targetLX, 0.2);
+            r.aiHands.l.y = M.lerp(r.aiHands.l.y, targetLY, 0.2);
+
+            // Mão Direita (CPU)
+            let targetRX = rSh.x; let targetRY = rSh.y + 80;
+            if (r.aiState === 2) {
+                targetRX = rSh.x - 50; targetRY = rSh.y + punchExt;
+                if (r.aiTimer === 10) this.damagePlayer(15);
+            }
+            r.aiHands.r.x = M.lerp(r.aiHands.r.x, targetRX, 0.2);
+            r.aiHands.r.y = M.lerp(r.aiHands.r.y, targetRY, 0.2);
+
+            if (r.aiTimer > 20) r.aiState = 0; // Reset soco
+
+            // Constroi objeto Pose compatível com o renderizador
+            // Usamos coordenadas de tela direta aqui para simplificar
+            this.rival.pose = {
+                keypoints: [
+                    {name:'nose', x: (head.x + w/2)/2 * (640/w) , y: head.y * (480/h)}, // Conversão inversa tosca só pra preencher
+                    // O renderizador de Rival usa coordenadas normalizadas se isSelf=false, 
+                    // mas aqui vamos injetar coordenadas de tela e flagar no render
+                ],
+                // Dados extras para o renderizador customizado da CPU
+                cpuData: { head, lSh, rSh, lW: r.aiHands.l, rW: r.aiHands.r }
             };
+        },
 
-            const nose = getKp('nose');
-            const leftWr = getKp('left_wrist');
-            const rightWr = getKp('right_wrist');
-            const leftSh = getKp('left_shoulder');
-            const rightSh = getKp('right_shoulder');
+        damagePlayer: function(dmg) {
+            // Chance de esquiva do player (se ele estiver se movendo muito)
+            this.player.hp -= dmg;
+            this.cam.shake = 20;
+            window.Sfx.play(100, 'sawtooth', 0.1, 0.3);
+            this.spawnFloat("OUCH!", this.cam.x, this.cam.y);
+        },
 
-            // Atualiza estado de cada mão
+        updatePlayerPhysics: function(w, h) {
+            if (!this.player.pose) return;
+            const stats = CONF.CHARS[this.myChar].stats;
+
+            // Mapeia coordenadas para o centro da tela (0,0 no meio)
+            const map = (p) => ({ x: (1 - p.x/640)*w - w/2, y: (p.y/480)*h - h/2 });
+            
+            const getPt = (n) => this.player.pose.keypoints.find(k => k.name === n) || {x:0,y:0};
+            const lW = map(getPt('left_wrist'));
+            const rW = map(getPt('right_wrist'));
+
+            // Processa cada mão
             ['l', 'r'].forEach(side => {
-                const handObj = this.player.hands[side];
-                const currPos = side === 'l' ? leftWr : rightWr;
-                const shoulder = side === 'l' ? leftSh : rightSh;
+                const hand = this.player.hands[side];
+                const curr = side === 'l' ? lW : rW;
                 
-                // Calcula velocidade instantânea (Delta Pos)
-                const dx = currPos.x - handObj.pos.x;
-                const dy = currPos.y - handObj.pos.y;
-                const dist = Math.hypot(dx, dy);
-                const velocity = dist; // pixels por frame
+                // Calcula velocidade (Delta)
+                const vx = curr.x - hand.x;
+                const vy = curr.y - hand.y;
+                const vel = Math.hypot(vx, vy);
 
-                // Vetor ombro -> mão (Extensão)
-                const armLen = MathUtils.dist(shoulder, currPos);
-                const isExtended = armLen > (100 * charStats.reach); // Valor base arbitrário calibrado
-
-                // -- Lógica de Detecção de Intenção --
-                
-                // Se estava IDLE e acelerou muito rápido -> PUNCH
-                if (handObj.state === 'IDLE') {
-                    if (velocity > CONF.PUNCH.MIN_VELOCITY * charStats.speed && this.player.stamina > 5) {
-                        handObj.state = 'PUNCHING';
-                        this.player.stamina -= charStats.stamina_cost;
-                        // Toca som de "woosh"
-                        window.Sfx.play(800, 'sine', 0.1, 0.1);
-                    }
-                } 
-                else if (handObj.state === 'PUNCHING') {
-                    // Verifica colisão
-                    this.checkCollision(side, currPos, velocity);
-                    
-                    // Se a velocidade caiu ou braço esticou totalmente, volta
-                    if (velocity < 2 || isExtended) {
-                        handObj.state = 'RETRACT';
-                    }
-                }
-                else if (handObj.state === 'RETRACT') {
-                    // Cooldown simples
-                    handObj.state = 'IDLE';
+                // Detecção de Soco (Aceleração súbita)
+                if (vel > CONF.PUNCH.MIN_VEL * stats.speed && hand.state === 0) {
+                    hand.state = 1; // Punching
+                    window.Sfx.play(150 + Math.random()*50, 'sawtooth', 0.1, 0.05); // Swish sound
                 }
 
-                // Atualiza histórico
-                handObj.pos = currPos;
-                handObj.vel = {x: dx, y: dy};
+                // Colisão
+                if (hand.state === 1) {
+                    this.checkHit(side, curr, vel, stats);
+                    if (vel < 5) hand.state = 0; // Reset se parar
+                } else {
+                    hand.state = 0;
+                }
+
+                hand.x = curr.x; hand.y = curr.y;
             });
         },
 
-        checkCollision: function(side, handPos, velocity) {
+        checkHit: function(side, pos, vel, stats) {
             let hit = false;
-            let target = null;
-            let damage = 0;
+            let dmg = stats.power * (vel / 10);
 
-            const charStats = CONF.CHARS[this.player.myCharKey];
-            const dmgBase = charStats.power * (velocity / 10); // Dano baseado na velocidade do impacto
-
-            if (this.mode === 'SOLO') {
-                // Colisão com Saco de Pancada (Círculo vs Ponto simplificado)
-                // O saco está em (0, height_offset) no mundo, ajustado pelo pêndulo
-                const bagWorldX = this.bag.x + Math.sin(this.bag.angle) * this.bag.len;
-                const bagWorldY = this.bag.y + Math.cos(this.bag.angle) * this.bag.len;
-
-                // CORREÇÃO CRÍTICA AQUI: O IF FOI QUEBRADO PARA A LINHA DE BAIXO
-                // Distância da mão para o "corpo" do saco 
-                if (MathUtils.dist(handPos, {x: bagWorldX, y: bagWorldY}) < 60) {
-                    hit = true;
-                    // Físico do saco: Adiciona velocidade angular baseada na direção do soco
-                    const force = (handPos.x < bagWorldX ? 1 : -1) * (velocity * 0.02) * charStats.mass;
-                    this.bag.angVel += force;
-                    damage = dmgBase;
-                }
-            } 
-            else if (this.mode === 'VERSUS' && this.rival.pose) {
-                // Colisão com Rival (precisa transformar as coordenadas do rival)
-                // O rival é renderizado na posição dele. Vamos assumir hitbox na cabeça.
-                // Como é P2P, usamos a posição visual do rival para detecção local.
-                
-                // Rival Head (espelhada ou não, dependendo do lado)
-                // Simplificação: Rival está centrado em 0,0 com um Z diferente, mas aqui é 2D.
-                // Usamos a pose dele.
-                const rNose = this.rival.pose.keypoints.find(k => k.name === 'nose');
-                if (rNose) {
-                     // Converte pose do rival (que vem 0-640) para coord de jogo
-                     const rX = (1 - rNose.x/640) * window.innerWidth - window.innerWidth/2;
-                     const rY = (rNose.y/480) * window.innerHeight - window.innerHeight/2;
-                     
-                     if (MathUtils.dist(handPos, {x: rX, y: rY}) < 80) {
-                        hit = true;
-                        damage = dmgBase;
-                     }
-                }
+            // Hitbox genérica do rival (centro da tela basicamente)
+            // No modo SOLO (CPU), o rival está em coords de tela. 
+            // No modo VERSUS, também desenhamos no centro.
+            // Vamos assumir uma hitbox de "tronco/cabeça" no centro da tela 3D projetada.
+            
+            // A mão do player precisa estar "perto do centro" e "esticada" (z-depth simulado)
+            // Como é 2D, checamos proximidade do centro (0, -50)
+            if (M.dist(pos, {x: 0, y: -50}) < 100) {
+                hit = true;
             }
 
             if (hit) {
-                // GAME FEEL: CONGELA, TREME, PARTICULAS
-                this.hitStopTimer = CONF.HIT_STOP_MS;
-                this.camera.zoom = 1.05; // Zoom in leve
-                this.spawnParticles(handPos.x, handPos.y, 10, '#FFFF00');
-                this.spawnPopText(Math.floor(damage), handPos.x, handPos.y - 50);
-                window.Sfx.hit(); 
+                this.hitStop = dmg > 15 ? CONF.HIT_STOP_HEAVY : CONF.HIT_STOP_LIGHT;
+                window.Sfx.play(100, 'square', 0.1, 0.3); // Impacto pesado
+                this.spawnPart(pos.x, pos.y, 10, '#fff');
+                this.spawnFloat(Math.floor(dmg), pos.x, pos.y - 50);
+                this.rival.hp -= dmg;
+                if (this.isOnline) this.sendHit(dmg);
                 
-                // Consome estado de soco para não dar hit kill num frame
-                this.player.hands[side].state = 'RETRACT';
-
-                // Aplica dano lógico
-                if (this.mode === 'VERSUS') {
-                    this.sendHit(damage);
-                    // Feedback visual imediato
-                    this.rival.hp -= damage;                } else {
-                    // Score no modo treino
-                    this.rival.hp -= damage; // Só visual
-                }
+                // Reset mão para não dar hit kill
+                this.player.hands[side].state = 0;
             }
         },
 
-        updateBagPhysics: function() {
-            // Simulação de Pêndulo
-            // Aceleração Angular = (-g / len) * sin(theta)
-            const accel = (-CONF.GRAVITY / (this.bag.len/10)) * Math.sin(this.bag.angle);
-            this.bag.angVel += accel;
-            this.bag.angVel *= CONF.DRAG; // Atrito do ar
-            this.bag.angle += this.bag.angVel;
-        },
-
-        updateStamina: function() {
-            if (this.player.stamina < this.player.maxStamina) {
-                this.player.stamina += 0.3; // Regeneração
-            }
-        },
-
-        // --- RENDERIZAÇÃO (VISUAL STYLE) ---
+        // =====================================================================
+        // RENDERIZAÇÃO
+        // =====================================================================
         updateCamera: function(w, h) {
-            // Câmera segue levemente a cabeça do jogador e a do rival
-            let targetX = 0;
-            let targetY = 0;
-            
-            // Se tiver pose, foca no rosto
-            const nose = this.player.pose?.keypoints.find(k => k.name === 'nose');
-            if (nose) {
-                const px = (1 - nose.x/640) * w - w/2;
-                targetX = px * 0.2; // Segue 20%
+            // Câmera segue a ação com "peso"
+            let tx = 0;
+            if (this.player.pose) {
+                const nose = this.player.pose.keypoints.find(k => k.name === 'nose');
+                if (nose) tx = (1 - nose.x/640)*w - w/2;
             }
-
-            // Suavização (Lerp)
-            this.camera.x = MathUtils.lerp(this.camera.x, targetX + this.camera.shakeX, CONF.CAMERA_SMOOTH);
-            this.camera.y = MathUtils.lerp(this.camera.y, targetY + this.camera.shakeY, CONF.CAMERA_SMOOTH);
-            
-            // Retorna zoom ao normal
-            this.camera.zoom = MathUtils.lerp(this.camera.zoom, 1.0, 0.1);
+            // Lerp suave
+            this.cam.x = M.lerp(this.cam.x, tx * 0.3, CONF.CAMERA_SMOOTH);
+            // Zoom dinâmico no impacto
+            const tz = this.hitStop > 0 ? 1.1 : 1.0;
+            this.cam.z = M.lerp(this.cam.z, tz, 0.2);
         },
 
         drawGame: function(ctx, w, h) {
-            // Limpa e aplica câmera
+            // 1. Limpeza e Setup de Câmera
             ctx.save();
-            ctx.fillStyle = '#1a1a2e'; // Fundo Arcade Dark
-            ctx.fillRect(0,0,w,h);
+            ctx.fillStyle = '#111'; ctx.fillRect(0,0,w,h); // Fundo escuro
             
-            ctx.translate(w/2, h/2);            ctx.scale(this.camera.zoom, this.camera.zoom);
-            ctx.translate(-this.camera.x, -this.camera.y);
+            ctx.translate(w/2, h/2);
+            ctx.scale(this.cam.z, this.cam.z);
+            ctx.translate(-this.cam.x + this.cam.shake, this.cam.shake);
 
-            // 1. CHÃO (Grid de Perspectiva)
-            this.drawFloor(ctx, w, h);
+            // 2. Ambiente (Ringue 3D Falso)
+            this.drawRing(ctx, w, h);
 
-            // 2. OBJETOS DE FUNDO (Saco ou Rival)
-            if (this.mode === 'SOLO') {
-                this.drawBag(ctx);
-            } else if (this.mode === 'VERSUS') {
-                this.drawRival(ctx);
-            }
+            // 3. Rival (CPU ou Player)
+            this.drawRivalObj(ctx);
 
-            // 3. JOGADOR (Frente)
-            this.drawPlayer(ctx, this.player.pose, this.player.myCharKey, true);
+            // 4. Player (Você)
+            this.drawPlayerObj(ctx, this.player.pose, this.myChar, true);
 
-            // 4. EFEITOS (Partículas, Textos)
-            this.drawEffects(ctx);
+            // 5. FX
+            this.drawParticles(ctx);
 
             ctx.restore();
 
-            // 5. HUD (Fixo na tela)
+            // 6. HUD
             this.drawHUD(ctx, w, h);
         },
 
-        drawFloor: function(ctx, w, h) {
-            // Simula profundidade com linhas
-            ctx.strokeStyle = '#303a5e';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            // Horizonte falso
-            const floorY = 100; 
-            for (let i = -500; i <= 500; i+=100) {
-                // Linhas verticais convergindo
-                ctx.moveTo(i, floorY);
-                ctx.lineTo(i * 3, h);
-            }
-            // Linhas horizontais
-            for (let i = 0; i < 5; i++) {
-                const y = floorY + (i*80);
-                ctx.moveTo(-w, y);
-                ctx.lineTo(w, y);
-            }
-            ctx.stroke();
-
-            // Sombra do ringue
-            ctx.fillStyle = 'rgba(0,0,0,0.3)';
-            ctx.ellipse(0, 200, 300, 100, 0, 0, Math.PI*2);
+        drawRing: function(ctx, w, h) {
+            // Chão com grade de perspectiva para profundidade
+            const horizon = -50;
+            const bottom = h/2 + 100;
+            
+            // Gradiente do chão (Spotlight)
+            const grad = ctx.createRadialGradient(0, 100, 50, 0, 100, 600);
+            grad.addColorStop(0, '#333');
+            grad.addColorStop(1, '#000');
+            ctx.fillStyle = grad;
+            ctx.beginPath(); 
+            ctx.moveTo(-w, horizon); ctx.lineTo(w, horizon);
+            ctx.lineTo(w, bottom); ctx.lineTo(-w, bottom);
             ctx.fill();
+
+            // Cordas do Ringue (Linhas horizontais)
+            ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 4;
+            for(let i=0; i<3; i++) {
+                let y = horizon - 50 - (i*40);
+                ctx.beginPath(); ctx.moveTo(-w, y); ctx.lineTo(w, y); ctx.stroke();
+            }
         },
-        drawPlayer: function(ctx, pose, charKey, isSelf) {
+
+        drawPlayerObj: function(ctx, pose, charType, isSelf) {
             if (!pose) return;
-            const c = CONF.CHARS[charKey];
+            const c = CONF.CHARS[charType];
             
-            // Helper de coordenadas
-            const getPos = (name) => {
-                const k = pose.keypoints.find(p => p.name === name);
-                if (!k) return {x:0, y:0};
-                // Se for isSelf, já transformamos no update. 
-                // Se for Rival, precisamos garantir que está no sistema de coord correto.
-                if (isSelf) {
-                    return { 
-                        x: (1 - k.x/640) * ctx.canvas.width - ctx.canvas.width/2, 
-                        y: (k.y/480) * ctx.canvas.height - ctx.canvas.height/2 
-                    };
+            let nose, lW, rW, lS, rS;
+
+            if (isSelf) {
+                const kp = pose.keypoints;
+                const get = (n) => {
+                    const k = kp.find(p => p.name === n);
+                    if (!k) return {x:0, y:0};
+                    return { x: (1 - k.x/640)*ctx.canvas.width - ctx.canvas.width/2, y: (k.y/480)*ctx.canvas.height - ctx.canvas.height/2 };
+                };
+                nose = get('nose');
+                lW = get('left_wrist'); rW = get('right_wrist');
+                lS = get('left_shoulder'); rS = get('right_shoulder');
+            } else {
+                // Renderização da CPU (Usa os dados calculados em updateAI)
+                if (pose.cpuData) {
+                    nose = pose.cpuData.head;
+                    lS = pose.cpuData.lSh; rS = pose.cpuData.rSh;
+                    lW = pose.cpuData.lW; rW = pose.cpuData.rW;
                 } else {
-                    // Rival vem da rede, assume-se normalizado ou raw.
-                    // Para simplificar a demo, usamos a lógica espelhada se for raw.
-                    return { 
-                        x: (k.x/640) * ctx.canvas.width - ctx.canvas.width/2, 
-                        y: (k.y/480) * ctx.canvas.height - ctx.canvas.height/2 
+                    // Multiplayer render (similar a isSelf mas sem espelhamento X)
+                    const kp = pose.keypoints;
+                    const get = (n) => {
+                        const k = kp.find(p => p.name === n);
+                        if (!k) return {x:0, y:0};
+                        return { x: (k.x/640)*ctx.canvas.width - ctx.canvas.width/2, y: (k.y/480)*ctx.canvas.height - ctx.canvas.height/2 };
                     };
+                    nose = get('nose');
+                    lW = get('left_wrist'); rW = get('right_wrist');
+                    lS = get('left_shoulder'); rS = get('right_shoulder');
                 }
-            };
+            }
 
-            const head = getPos('nose');
-            const lSh = getPos('left_shoulder');
-            const rSh = getPos('right_shoulder');
-            const lWr = getPos('left_wrist');
-            const rWr = getPos('right_wrist');
-
-            // --- DESENHO ESTILIZADO (Estilo Rayman/Mario - Membros flutuantes com volume) ---
+            // --- ESTILO VISUAL "PLAYSTATION 2" (SHADING VOLUMÉTRICO) ---
             
-            // Sombra
-            ctx.fillStyle = 'rgba(0,0,0,0.4)';
-            ctx.beginPath();
-            ctx.ellipse(head.x, 300, 60, 20, 0, 0, Math.PI*2);
-            ctx.fill();
+            // 1. Sombra no chão
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.beginPath(); ctx.ellipse(nose.x, 250, 80, 20, 0, 0, Math.PI*2); ctx.fill();
 
-            // Função para desenhar Luva
-            const drawGlove = (pos, color) => {
-                // Efeito 3D: Escala baseada no Y (quanto mais baixo na tela, mais perto da camera)
-                const scale = MathUtils.getScale(pos.y, 480);
-                const size = 30 * scale * (isSelf ? 1.2 : 1); // Luvas do jogador maiores
-
-                // Rastro (Motion Blur simples)
-                ctx.fillStyle = color;
-                ctx.beginPath();
-                ctx.arc(pos.x, pos.y, size, 0, Math.PI*2);                ctx.fill();
+            // 2. Conexões (Braços) - Grossos e com borda
+            const drawLimb = (p1, p2) => {
+                ctx.lineWidth = 35; 
+                ctx.strokeStyle = '#2c3e50'; // Borda escura
+                ctx.lineCap = 'round';
+                ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
                 
-                // Brilho
-                ctx.fillStyle = 'rgba(255,255,255,0.3)';
-                ctx.beginPath();
-                ctx.arc(pos.x - size*0.3, pos.y - size*0.3, size*0.4, 0, Math.PI*2);
-                ctx.fill();
-
-                // Contorno
-                ctx.strokeStyle = '#000';
-                ctx.lineWidth = 3;
+                ctx.lineWidth = 28;
+                ctx.strokeStyle = c.colors.main; // Cor principal
                 ctx.stroke();
             };
+            drawLimb(lS, lW); drawLimb(rS, rW);
 
-            const drawCircle = (x, y, r, color) => {
-                ctx.fillStyle = color;
-                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
-            };
-
-            const drawLimb = (p1, p2, color, w) => {
-                ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = 'round';
-                ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-            };
-
-            // Desenha Corpo (Abstrato - Camiseta)
-            ctx.strokeStyle = c.color;
-            ctx.lineWidth = 80;
-            ctx.lineCap = 'round';
-            ctx.beginPath();
-            ctx.moveTo(lSh.x, lSh.y + 20);
-            ctx.lineTo(rSh.x, rSh.y + 20);
-            ctx.stroke();
-
-            // Macacão (Detalhe)
-            ctx.strokeStyle = '#2c3e50'; // Jeans
-            ctx.lineWidth = 60;
-            ctx.beginPath();
-            ctx.moveTo((lSh.x + rSh.x) / 2, lSh.y + 50);
-            ctx.lineTo((lSh.x + rSh.x) / 2, lSh.y + 150);
-            ctx.stroke();
-            
-            const scale = 1; // Simplificado
-
-            // Alças do Macacão
-            ctx.lineWidth = 10 * scale; ctx.strokeStyle = '#2c3e50';
-            ctx.beginPath(); ctx.moveTo(lSh.x, lSh.y + 10); ctx.lineTo((lSh.x + rSh.x) / 2 - 20 * scale, lSh.y + 60 * scale); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(rSh.x, rSh.y + 10); ctx.lineTo((lSh.x + rSh.x) / 2 + 20 * scale, lSh.y + 60 * scale); ctx.stroke();
-            // Botões Amarelos
-            drawCircle((lSh.x + rSh.x) / 2 - 20 * scale, lSh.y + 60 * scale, 6, '#ffff00');
-            drawCircle((lSh.x + rSh.x) / 2 + 20 * scale, lSh.y + 60 * scale, 6, '#ffff00');
-
-            // 2. BRAÇOS
-            const armWidth = 25;
-            // Braço Esquerdo
-            drawLimb(lSh, this.player.hands.l.pos, c.color, armWidth);
-            drawLimb(this.player.hands.l.pos, lWr, c.color, armWidth);
-            // Braço Direito
-            drawLimb(rSh, this.player.hands.r.pos, c.color, armWidth);
-            drawLimb(this.player.hands.r.pos, rWr, c.color, armWidth);
-
-            // 3. CABEÇA
-            // Pescoço
-            ctx.fillStyle = c.skin;
-            ctx.fillRect(head.x - 15 * scale, head.y - 30 * scale, 30 * scale, 40 * scale);
-
-            if (head.x !== 0) {
-                // Cabeça Base
-                drawCircle(head.x, head.y, 45 * scale, c.skin);
-                
-                // Bigode (Curvas Bézier)
-                ctx.fillStyle = '#000';
-                ctx.beginPath();
-                const my = head.y + 10 * scale;
-                ctx.moveTo(head.x, my);
-                ctx.bezierCurveTo(head.x - 20 * scale, my - 10 * scale, head.x - 30 * scale, my + 20 * scale, head.x, my + 10 * scale);
-                ctx.bezierCurveTo(head.x + 30 * scale, my + 20 * scale, head.x + 20 * scale, my - 10 * scale, head.x, my);
-                ctx.fill();
-
-                // Nariz
-                drawCircle(head.x, head.y, 10 * scale, '#ffaaaa');
-
-                // Olhos (Ovai simples)
-                ctx.fillStyle = '#000';
-                ctx.beginPath(); ctx.ellipse(head.x - 12 * scale, head.y - 15 * scale, 4 * scale, 8 * scale, 0, 0, Math.PI*2); ctx.fill();
-                ctx.beginPath(); ctx.ellipse(head.x + 12 * scale, head.y - 15 * scale, 4 * scale, 8 * scale, 0, 0, Math.PI*2); ctx.fill();
-                // Boné Verde
-                ctx.fillStyle = c.hat;
-                ctx.beginPath();
-                ctx.arc(head.x, head.y - 10 * scale, 46 * scale, Math.PI, 0); // Domo
-                ctx.fill();
-                // Aba do boné
-                ctx.beginPath();
-                ctx.ellipse(head.x, head.y - 12 * scale, 50 * scale, 15 * scale, 0, Math.PI, 0);
-                ctx.fill();
-                // Logo 'L'
-                ctx.fillStyle = '#fff';
-                ctx.beginPath(); ctx.arc(head.x, head.y - 35 * scale, 12 * scale, 0, Math.PI*2); ctx.fill();
-                ctx.fillStyle = c.hat;
-                ctx.font = `bold ${16 * scale}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                ctx.fillText("L", head.x, head.y - 34 * scale);
-            }
-
-            // 4. LUVAS DE BOXE (Desenhadas por último para ficar na frente)
-            drawGlove(lWr, '#fff'); // Branco clássico de luva cartoon
-            drawGlove(rWr, '#fff');
-        },
-
-        drawBag: function(ctx) {
-            ctx.save();
-            // Ponto de pivô no topo
-            const pivotX = 0;
-            const pivotY = -200;
-            
-            ctx.translate(pivotX, pivotY);
-            ctx.rotate(this.bag.angle);
-
-            // Corrente
-            ctx.strokeStyle = '#bdc3c7';
-            ctx.lineWidth = 8;
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.lineTo(0, this.bag.len);
-            ctx.stroke();
-
-            // O Saco
-            ctx.translate(0, this.bag.len);
-            
-            // Corpo do saco
-            ctx.fillStyle = '#c0392b'; // Vermelho couro
-            ctx.beginPath();
-            ctx.roundRect(-40, 0, 80, 160, 20);
+            // 3. Tronco (Abstrato)
+            ctx.fillStyle = '#333';
+            ctx.beginPath(); 
+            ctx.moveTo(lS.x, lS.y); ctx.lineTo(rS.x, rS.y);
+            ctx.lineTo((rS.x+lS.x)/2, rS.y + 150); 
             ctx.fill();
-            ctx.lineWidth = 4;
-            ctx.strokeStyle = '#922b21';
-            ctx.stroke();
-            // Fita silver tape
-            ctx.fillStyle = '#95a5a6';
-            ctx.fillRect(-42, 100, 84, 20);
 
-            ctx.restore();
+            // 4. Cabeça (Com volume)
+            // Base
+            ctx.fillStyle = c.colors.skin;
+            ctx.beginPath(); ctx.arc(nose.x, nose.y, 50, 0, Math.PI*2); ctx.fill();
+            // Boné/Cabelo
+            ctx.fillStyle = c.colors.sub;
+            ctx.beginPath(); ctx.arc(nose.x, nose.y-10, 52, Math.PI, 0); ctx.fill();
+            
+            // 5. Luvas (As estrelas do show)
+            const drawGlove = (p, color) => {
+                // Brilho de "material plástico/couro"
+                const g = ctx.createRadialGradient(p.x-10, p.y-10, 5, p.x, p.y, 40);
+                g.addColorStop(0, '#fff');
+                g.addColorStop(0.3, color);
+                g.addColorStop(1, '#000'); // Borda escura 3D
+                
+                ctx.fillStyle = g;
+                ctx.beginPath(); ctx.arc(p.x, p.y, 45, 0, Math.PI*2); ctx.fill();
+            };
+            drawGlove(lW, '#ecf0f1');
+            drawGlove(rW, '#ecf0f1');
         },
 
-        drawRival: function(ctx) {
-            // Desenha um "fantasma" ou personagem real baseado nos dados da rede
+        drawRivalObj: function(ctx) {
             if (this.rival.pose) {
-                ctx.save();
-                ctx.globalAlpha = 1.0;
-                // Escala negativa em X pode ser necessária dependendo de como os dados vêm, 
-                // mas aqui desenhamos normal pois assumimos que o rival está "do outro lado"
-                this.drawPlayer(ctx, this.rival.pose, this.rival.charKey, false);
-                ctx.restore();
+                // Desenha oponente
+                this.drawPlayerObj(ctx, this.rival.pose, this.rival.char, false);
             } else {
-                // Placeholder esperando dados
-                ctx.fillStyle = '#fff';
-                ctx.textAlign = 'center';
-                ctx.fillText("AGUARDANDO SINAL...", 0, -100);
+                if(this.mode === 'VERSUS') {
+                    ctx.fillStyle = '#666';
+                    ctx.textAlign = 'center';
+                    ctx.font = "20px 'Chakra Petch'";
+                    ctx.fillText("BUSCANDO OPONENTE...", 0, -50);
+                }
             }
         },
 
-        drawEffects: function(ctx) {
-            for (let i = this.effects.length - 1; i >= 0; i--) {
-                const p = this.effects[i];
+        drawParticles: function(ctx) {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
                 p.life--;
-                p.x += p.vx;
-                p.y += p.vy;
-                p.vy += 0.5; // Gravidade partículas
-
+                p.x += p.vx; p.y += p.vy;
                 if (p.type === 'text') {
-                    ctx.fillStyle = `rgba(255, 255, 255, ${p.life / 30})`;
-                    ctx.font = "bold 40px Impact";
-                    ctx.strokeStyle = '#000';
-                    ctx.lineWidth = 3;
-                    ctx.strokeText(p.val, p.x, p.y);
-                    ctx.fillText(p.val, p.x, p.y);
+                    ctx.fillStyle = `rgba(255,255,0,${p.life/30})`;
+                    ctx.font = "bold 50px Impact";
+                    ctx.strokeStyle = '#000'; ctx.lineWidth = 4;
+                    ctx.strokeText(p.t, p.x, p.y);
+                    ctx.fillText(p.t, p.x, p.y);
                 } else {
-                    ctx.fillStyle = p.color;
-                    ctx.globalAlpha = p.life / 20;
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-                    ctx.fill();
+                    ctx.fillStyle = p.c;
+                    ctx.globalAlpha = p.life/20;
+                    ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, Math.PI*2); ctx.fill();
                     ctx.globalAlpha = 1;
                 }
-
-                if (p.life <= 0) this.effects.splice(i, 1);            }
+                if(p.life <= 0) particles.splice(i, 1);
+            }
         },
 
         drawHUD: function(ctx, w, h) {
-            // Estilo Arcade Clássico
-            ctx.font = "bold 24px Arial";
-            
-            // Barras de vida
-            const barW = w * 0.4;
+            // Estilo Barra de Luta Moderna
+            const barW = 300;
             const barH = 30;
+            const pad = 40;
+
+            // Player Bar
+            ctx.fillStyle = '#222';
+            ctx.beginPath(); ctx.moveTo(pad, 30); ctx.lineTo(pad+barW, 30); ctx.lineTo(pad+barW-20, 30+barH); ctx.lineTo(pad, 30+barH); ctx.fill();
             
-            // Player
-            ctx.fillStyle = '#333'; ctx.fillRect(20, 20, barW, barH);
-            ctx.fillStyle = '#e74c3c'; 
-            ctx.fillRect(22, 22, (barW - 4) * (this.player.hp / 100), barH - 4);
-            ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
-            ctx.fillText(CONF.CHARS[this.player.myCharKey].name, 20, 18);
+            const hpW = (this.player.hp / 100) * (barW-4);
+            ctx.fillStyle = hpW > 50 ? '#2ecc71' : '#e74c3c';
+            ctx.beginPath(); ctx.moveTo(pad+2, 32); ctx.lineTo(pad+2+hpW, 32); ctx.lineTo(pad+2+hpW-15, 30+barH-4); ctx.lineTo(pad+2, 30+barH-4); ctx.fill();
 
-            // Stamina (Barra fina amarela embaixo)
-            ctx.fillStyle = '#f1c40f';
-            ctx.fillRect(22, 22 + barH, (barW - 4) * (this.player.stamina / 100), 6);
+            // Nome
+            ctx.fillStyle = '#fff'; ctx.font = "bold 20px 'Russo One'"; ctx.textAlign = 'left';
+            ctx.fillText(CONF.CHARS[this.myChar].name, pad, 25);
 
-            // Rival
-            const rX = w - barW - 20;
-            ctx.fillStyle = '#333'; ctx.fillRect(rX, 20, barW, barH);
-            ctx.fillStyle = '#3498db'; 
-            ctx.fillRect(rX + 2, 22, (barW - 4) * (this.rival.hp / 100), barH - 4);
+            // Rival Bar (Espelhado)
+            const rX = w - pad - barW;
+            ctx.fillStyle = '#222';
+            ctx.beginPath(); ctx.moveTo(rX+20, 30); ctx.lineTo(rX+barW, 30); ctx.lineTo(rX+barW, 30+barH); ctx.lineTo(rX, 30+barH); ctx.fill();
+            
+            const rHpW = (this.rival.hp / 100) * (barW-4);
+            ctx.fillStyle = '#3498db';
+            ctx.beginPath(); ctx.moveTo(w-pad-2-rHpW+15, 32); ctx.lineTo(w-pad-2, 32); ctx.lineTo(w-pad-2, 30+barH-4); ctx.lineTo(w-pad-2-rHpW, 30+barH-4); ctx.fill();
+
             ctx.fillStyle = '#fff'; ctx.textAlign = 'right';
-            ctx.fillText(this.mode === 'SOLO' ? "TRAINING BAG" : "RIVAL", w - 20, 18);
+            ctx.fillText(this.mode==='SOLO'?'CPU BOT':'RIVAL', w-pad, 25);
 
-            // Tempo
-            ctx.fillStyle = '#fff';
-            ctx.textAlign = 'center';
-            ctx.font = "bold 60px Impact";
-            ctx.fillText(Math.ceil(this.time), w / 2, 60);
+            // VS Logo
+            ctx.fillStyle = '#fff'; ctx.font = "bold 40px 'Russo One'"; ctx.textAlign = 'center';
+            ctx.fillText("VS", w/2, 60);
         },
 
-        // --- SISTEMAS AUXILIARES ---
-        spawnParticles: function(x, y, count, color) {
-            for (let i = 0; i < count; i++) {
-                this.effects.push({
-                    type: 'part',
-                    x: x, y: y,
-                    vx: (Math.random() - 0.5) * 15,
-                    vy: (Math.random() - 0.5) * 15,
-                    life: 20 + Math.random() * 10,
-                    size: 3 + Math.random() * 5,
-                    color: color
-                });
-            }        },
-
-        spawnPopText: function(text, x, y) {
-            this.effects.push({
-                type: 'text', val: text,
-                x: x, y: y, vx: 0, vy: -2, life: 40
-            });
-        },
-
-        // --- NETCODE (Firebase Realtime) ---
-        connectNet: function() {
-            if (!this.isOnline) return;
-            
-            const myId = window.System.playerId;
-            const roomRef = window.DB.ref(`rooms/${this.roomId}`);
-            this.dbRef = roomRef;
-
-            // Registra presença
-            roomRef.child(`players/${myId}`).set({
-                charKey: this.player.myCharKey,
-                hp: 100,
-                joined: Date.now()
-            });
-            roomRef.child(`players/${myId}`).onDisconnect().remove();
-
-            // Escuta oponente
-            roomRef.child('players').on('value', snap => {
-                const players = snap.val();
-                if (!players) return;
-
-                Object.keys(players).forEach(key => {
-                    if (key !== myId) {
-                        // Atualiza dados do rival
-                        const r = players[key];
-                        this.rival.id = key;
-                        this.rival.charKey = r.charKey || 'balanced';
-                        this.rival.pose = r.pose; // Pose crua ou comprimida
-                        
-                        // Recebeu Hit?
-                        if (r.lastHitId && r.lastHitId > this.rival.lastHitId) {
-                            // Alguém me bateu (o rival diz que bateu)
-                            // Na verdade, a lógica aqui é: Eu atualizo MEU hp se eu bater?
-                            // Não, usamos autoridade do atacante.
-                            // Se O RIVAL tem um campo "hitOnId == EU", eu tomo dano.
-                        }
-                        
-                        // Se o rival atualizou o HP dele (porque eu bati nele e ele aceitou, ou eu forcei), atualiza visual
-                        if (r.hp !== undefined) this.rival.hp = r.hp;
-                    }
-                });            });
-
-            // Escuta hits globais na sala (simplificado)
-            roomRef.child('hits').on('child_added', snap => {
-                const hit = snap.val();
-                if (hit.target === myId) {
-                    // Fui atingido!
-                    this.player.hp -= hit.damage;
-                    this.hitStopTimer = CONF.HIT_STOP_MS;
-                    this.camera.shakeX = 20;
-                    window.Sfx.play(100, 'sawtooth', 0.1, 0.4); // Som de dor
-                    this.spawnPopText("OUCH!", 0, 0);
-                }
-            });
-        },
-
-        updateNet: function() {
-            if (!this.isOnline || !this.dbRef) return;
-            
-            // Envia update a 20hz (a cada 3 frames a 60fps) para economizar banda
-            if (this.frame % 3 === 0) {
-                this.dbRef.child(`players/${window.System.playerId}`).update({
-                    pose: this.player.pose, // Envia pose
-                    hp: this.player.hp
-                });
-            }
-        },
-
-        sendHit: function(dmg) {
-            if (!this.isOnline || !this.rival.id) return;
-            
-            // Envia evento de hit para a sala
-            this.dbRef.child('hits').push({
-                attacker: window.System.playerId,
-                target: this.rival.id,
-                damage: dmg,
-                timestamp: Date.now()
-            });
-        },
-
-        // --- MENUS ---
-        updateSelect: function(w, h) {
-            // Input simples via mouse clicando nas áreas (simulado)
-            // Na versão real, poderia ser levantar a mão esquerda/direita
-        },
-        
         drawSelect: function(ctx, w, h) {
-            ctx.fillStyle = '#2c3e50';
-            ctx.fillRect(0, 0, w, h);
-            ctx.fillStyle = '#fff';            ctx.textAlign = 'center';
-            ctx.font = "40px Arial";
-            ctx.fillText("ESCOLHA SEU LUTADOR", w / 2, 100);
+            const grad = ctx.createLinearGradient(0,0,0,h);
+            grad.addColorStop(0, '#1a1a2e'); grad.addColorStop(1, '#16213e');
+            ctx.fillStyle = grad; ctx.fillRect(0,0,w,h);
 
-            const keys = Object.keys(CONF.CHARS);
-            const slotW = w / keys.length;
+            ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; 
+            ctx.font = "bold 50px 'Russo One'"; ctx.fillText("ESCOLHA SEU LUTADOR", w/2, 100);
 
-            keys.forEach((k, i) => {
-                const char = CONF.CHARS[k];
-                const x = i * slotW + slotW / 2;
-                const y = h / 2;
-                
-                // Card
-                ctx.fillStyle = k === this.player.myCharKey ? '#fff' : '#34495e';
-                if (k === this.player.myCharKey) ctx.globalAlpha = 0.2;
-                ctx.fillRect(i * slotW + 10, 150, slotW - 20, h - 200);
-                ctx.globalAlpha = 1.0;
-
-                // Avatar
-                ctx.fillStyle = char.color;
-                ctx.beginPath(); ctx.arc(x, y, 60, 0, Math.PI * 2); ctx.fill();
-                
-                // Nome
-                ctx.fillStyle = k === this.player.myCharKey ? '#f1c40f' : '#bdc3c7';
-                ctx.font = "bold 20px Arial";
-                ctx.fillText(char.name, x, y + 100);
-                
-                // Stats
-                ctx.font = "14px Arial";
-                ctx.fillStyle = '#fff';
-                ctx.fillText(`PWR: ${char.power}`, x, y + 130);
-                ctx.fillText(`SPD: ${char.speed}`, x, y + 150);
-            });
-
-            // Hack de clique para Canvas
-            if (!window.System.canvas.onclick) {
-                window.System.canvas.onclick = (e) => {
-                    const rect = window.System.canvas.getBoundingClientRect();
-                    const cx = e.clientX - rect.left;
-                    const idx = Math.floor(cx / (rect.width / keys.length));
-                    if (keys[idx]) {
-                        this.player.myCharKey = keys[idx];
-                        this.startGame('SOLO'); // Default clique = Solo, mudar logica se precisar
-                        // window.System.canvas.onclick = null; // Remove listener ao iniciar
+            const list = Object.keys(CONF.CHARS);
+            const slotW = w / list.length;
+            
+            // Hack para input de clique
+            if(!this._clickBind) {
+                this._clickBind = (e) => {
+                    if(this.state !== 'SELECT') return;
+                    const r = window.System.canvas.getBoundingClientRect();
+                    const idx = Math.floor((e.clientX - r.left) / (r.width/list.length));
+                    if(list[idx]) {
+                        this.myChar = list[idx];
+                        // Pergunta modo (Hack rápido: Clique na esquerda = Solo, Direita = Versus)
+                        // Para simplificar, vamos padrão para SOLO, mas se tiver Firebase vai pra Versus depois
+                        this.startGame('VERSUS'); // Tenta versus primeiro
                     }
                 };
+                window.System.canvas.addEventListener('mousedown', this._clickBind);
+            }
+
+            list.forEach((key, i) => {
+                const c = CONF.CHARS[key];
+                const cx = i * slotW + slotW/2;
+                const cy = h/2;
+                
+                // Card
+                ctx.fillStyle = key === this.myChar ? '#fff' : 'rgba(255,255,255,0.1)';
+                if(key === this.myChar) ctx.globalAlpha = 0.2;
+                ctx.roundRect(cx - 100, cy - 150, 200, 300, 20); ctx.fill();
+                ctx.globalAlpha = 1;
+
+                // Avatar Colorido
+                ctx.fillStyle = c.colors.main;
+                ctx.beginPath(); ctx.arc(cx, cy - 50, 60, 0, Math.PI*2); ctx.fill();
+                
+                ctx.fillStyle = '#fff'; ctx.font = "bold 24px 'Chakra Petch'";
+                ctx.fillText(c.name, cx, cy + 50);
+                
+                // Stats Bars
+                const drawStat = (l, v, y) => {
+                    ctx.fillStyle = '#aaa'; ctx.font = "14px Arial"; ctx.textAlign='left';
+                    ctx.fillText(l, cx - 80, y);
+                    ctx.fillStyle = '#333'; ctx.fillRect(cx-30, y-10, 100, 10);
+                    ctx.fillStyle = c.colors.sub; ctx.fillRect(cx-30, y-10, v*5, 10);
+                };
+                drawStat("PWR", c.stats.power, cy + 90);
+                drawStat("SPD", c.stats.speed*10, cy + 110);
+            });
+        },
+
+        drawKO: function(ctx, w, h) {
+            ctx.fillStyle = 'rgba(0,0,0,0.85)'; ctx.fillRect(0,0,w,h);
+            ctx.fillStyle = '#f1c40f'; ctx.textAlign = 'center';
+            ctx.font = "bold 100px 'Russo One'";
+            ctx.fillText(this.player.hp > 0 ? "VITÓRIA!" : "K.O.", w/2, h/2);
+            ctx.font = "30px 'Chakra Petch'"; ctx.fillStyle = '#fff';
+            ctx.fillText("Toque para reiniciar", w/2, h/2 + 80);
+            
+            // Hack restart
+            if(!this._clickRestart) {
+                this._clickRestart = () => { if(this.state === 'KO') this.init(); };
+                window.System.canvas.addEventListener('mousedown', this._clickRestart, {once:true});
             }
         },
 
-        drawResult: function(ctx, w, h) {            ctx.fillStyle = 'rgba(0,0,0,0.8)';
-            ctx.fillRect(0, 0, w, h);
-            ctx.fillStyle = '#fff';
-            ctx.textAlign = 'center';
-            ctx.font = "bold 80px Impact";
-            ctx.fillText(this.player.hp > 0 ? "VENCEDOR!" : "DERROTADO", w / 2, h / 2);
-            ctx.font = "30px Arial";
-            ctx.fillText("Toque para voltar ao menu", w / 2, h / 2 + 60);
+        spawnPart: function(x, y, n, c) {
+            for(let i=0; i<n; i++) particles.push({
+                x, y, vx:(Math.random()-0.5)*15, vy:(Math.random()-0.5)*15, 
+                life: 20+Math.random()*20, s: 4+Math.random()*6, c, type:'p'
+            });
+        },
+        spawnFloat: function(t, x, y) {
+            particles.push({ x, y, vx:0, vy:-3, life:40, t, type:'text' });
+        },
+
+        // --- NETCODE ---
+        connectNet: function() {
+            if(!this.isOnline) return;
+            const id = window.System.playerId;
+            this.dbRef = window.DB.ref(`rooms/${this.roomId}`);
+            
+            // Join
+            this.dbRef.child(`players/${id}`).set({ char: this.myChar, hp: 100, t: Date.now() });
+            this.dbRef.child(`players/${id}`).onDisconnect().remove();
+
+            // Listen Opponent
+            this.dbRef.child('players').on('value', s => {
+                const d = s.val(); if(!d) return;
+                Object.keys(d).forEach(k => {
+                    if(k !== id) {
+                        this.rival.id = k;
+                        this.rival.char = d[k].char;
+                        // Smooth Pose Interpolation seria aqui
+                        if(d[k].pose) this.rival.pose = d[k].pose; 
+                        if(d[k].hp) this.rival.hp = d[k].hp;
+                    }
+                });
+            });
+
+            // Send Pose Loop (Throttle)
+            if(!this._netLoop) {
+                this._netLoop = setInterval(() => {
+                    if(this.state === 'FIGHT' && this.player.pose) {
+                        this.dbRef.child(`players/${id}`).update({ 
+                            pose: this.player.pose, hp: this.player.hp 
+                        });
+                    }
+                }, 100);
+            }
         },
         
-        spawnConfetti: function(x, y) {
-            for (let i = 0; i < 50; i++) {
-                this.effects.push({
-                    type: 'part', x: x, y: y,
-                    vx: (Math.random() - 0.5) * 20, vy: (Math.random() - 1) * 20,
-                    life: 100, size: 8, color: `hsl(${Math.random() * 360}, 100%, 50%)`
-                });
-            }
+        sendHit: function(dmg) {
+            this.dbRef.child('events').push({ t: 'hit', dmg, tgt: this.rival.id });
         }
     };
 
-    // REGISTRO NO SISTEMA CORE
-    if(window.System) {
+    // REGISTRO SEGURO
+    if (window.System) {
         window.System.registerGame('box_pro', 'Pro Boxing', '🥊', Logic, {
-            camOpacity: 0.1, // Câmera quase invisível para imersão
-            smooth: true     // Ativa suavização nativa se houver
+            camOpacity: 0.15, 
+            smooth: true
         });
     }
-
 })();
