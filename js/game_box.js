@@ -547,3 +547,370 @@
             ctx.strokeStyle = '#2c3e50'; // Jeans
             ctx.lineWidth = 60;
             ctx.beginPath();
+            ctx.moveTo((lSh.x + rSh.x) / 2, lSh.y + 50);
+            ctx.lineTo((lSh.x + rSh.x) / 2, lSh.y + 150);
+            ctx.stroke();
+            // Alças do Macacão
+            ctx.lineWidth = 10 * scale; ctx.strokeStyle = '#2c3e50';
+            ctx.beginPath(); ctx.moveTo(lSh.x, lSh.y + 10); ctx.lineTo((lSh.x + rSh.x) / 2 - 20 * scale, lSh.y + 60 * scale); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(rSh.x, rSh.y + 10); ctx.lineTo((lSh.x + rSh.x) / 2 + 20 * scale, lSh.y + 60 * scale); ctx.stroke();
+            // Botões Amarelos
+            drawCircle((lSh.x + rSh.x) / 2 - 20 * scale, lSh.y + 60 * scale, 6, '#ffff00');
+            drawCircle((lSh.x + rSh.x) / 2 + 20 * scale, lSh.y + 60 * scale, 6, '#ffff00');
+
+            // 2. BRAÇOS
+            const armWidth = 25;
+            // Braço Esquerdo
+            drawLimb(lSh, this.player.hands.l.pos, c.color, armWidth);
+            drawLimb(this.player.hands.l.pos, lWr, c.color, armWidth);
+            // Braço Direito
+            drawLimb(rSh, this.player.hands.r.pos, c.color, armWidth);
+            drawLimb(this.player.hands.r.pos, rWr, c.color, armWidth);
+
+            // 3. CABEÇA
+            // Pescoço
+            ctx.fillStyle = c.skin;
+            ctx.fillRect(head.x - 15 * scale, head.y - 30 * scale, 30 * scale, 40 * scale);
+
+            if (head.x !== 0) {
+                // Cabeça Base
+                drawCircle(head.x, head.y, 45 * scale, c.skin);
+                
+                // Bigode (Curvas Bézier)
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                const my = head.y + 10 * scale;
+                ctx.moveTo(head.x, my);
+                ctx.bezierCurveTo(head.x - 20 * scale, my - 10 * scale, head.x - 30 * scale, my + 20 * scale, head.x, my + 10 * scale);
+                ctx.bezierCurveTo(head.x + 30 * scale, my + 20 * scale, head.x + 20 * scale, my - 10 * scale, head.x, my);
+                ctx.fill();
+
+                // Nariz
+                drawCircle(head.x, head.y, 10 * scale, '#ffaaaa');
+
+                // Olhos (Ovai simples)
+                ctx.fillStyle = '#000';
+                ctx.beginPath(); ctx.ellipse(head.x - 12 * scale, head.y - 15 * scale, 4 * scale, 8 * scale, 0, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.ellipse(head.x + 12 * scale, head.y - 15 * scale, 4 * scale, 8 * scale, 0, 0, Math.PI*2); ctx.fill();
+                // Boné Verde
+                ctx.fillStyle = c.hat;
+                ctx.beginPath();
+                ctx.arc(head.x, head.y - 10 * scale, 46 * scale, Math.PI, 0); // Domo
+                ctx.fill();
+                // Aba do boné
+                ctx.beginPath();
+                ctx.ellipse(head.x, head.y - 12 * scale, 50 * scale, 15 * scale, 0, Math.PI, 0);
+                ctx.fill();
+                // Logo 'L'
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(head.x, head.y - 35 * scale, 12 * scale, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = c.hat;
+                ctx.font = `bold ${16 * scale}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText("L", head.x, head.y - 34 * scale);
+            }
+
+            // 4. LUVAS DE BOXE (Desenhadas por último para ficar na frente)
+            drawGlove(lWr, '#fff'); // Branco clássico de luva cartoon
+            drawGlove(rWr, '#fff');
+        },
+
+        drawBag: function(ctx) {
+            ctx.save();
+            // Ponto de pivô no topo
+            const pivotX = 0;
+            const pivotY = -200;
+            
+            ctx.translate(pivotX, pivotY);
+            ctx.rotate(this.bag.angle);
+
+            // Corrente
+            ctx.strokeStyle = '#bdc3c7';
+            ctx.lineWidth = 8;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(0, this.bag.len);
+            ctx.stroke();
+
+            // O Saco
+            ctx.translate(0, this.bag.len);
+            
+            // Corpo do saco
+            ctx.fillStyle = '#c0392b'; // Vermelho couro
+            ctx.beginPath();
+            ctx.roundRect(-40, 0, 80, 160, 20);
+            ctx.fill();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#922b21';
+            ctx.stroke();
+            // Fita silver tape
+            ctx.fillStyle = '#95a5a6';
+            ctx.fillRect(-42, 100, 84, 20);
+
+            ctx.restore();
+        },
+
+        drawRival: function(ctx) {
+            // Desenha um "fantasma" ou personagem real baseado nos dados da rede
+            if (this.rival.pose) {
+                ctx.save();
+                ctx.globalAlpha = 1.0;
+                // Escala negativa em X pode ser necessária dependendo de como os dados vêm, 
+                // mas aqui desenhamos normal pois assumimos que o rival está "do outro lado"
+                this.drawPlayer(ctx, this.rival.pose, this.rival.charKey, false);
+                ctx.restore();
+            } else {
+                // Placeholder esperando dados
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'center';
+                ctx.fillText("AGUARDANDO SINAL...", 0, -100);
+            }
+        },
+
+        drawEffects: function(ctx) {
+            for (let i = this.effects.length - 1; i >= 0; i--) {
+                const p = this.effects[i];
+                p.life--;
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.5; // Gravidade partículas
+
+                if (p.type === 'text') {
+                    ctx.fillStyle = `rgba(255, 255, 255, ${p.life / 30})`;
+                    ctx.font = "bold 40px Impact";
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 3;
+                    ctx.strokeText(p.val, p.x, p.y);
+                    ctx.fillText(p.val, p.x, p.y);
+                } else {
+                    ctx.fillStyle = p.color;
+                    ctx.globalAlpha = p.life / 20;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+
+                if (p.life <= 0) this.effects.splice(i, 1);            }
+        },
+
+        drawHUD: function(ctx, w, h) {
+            // Estilo Arcade Clássico
+            ctx.font = "bold 24px Arial";
+            
+            // Barras de vida
+            const barW = w * 0.4;
+            const barH = 30;
+            
+            // Player
+            ctx.fillStyle = '#333'; ctx.fillRect(20, 20, barW, barH);
+            ctx.fillStyle = '#e74c3c'; 
+            ctx.fillRect(22, 22, (barW - 4) * (this.player.hp / 100), barH - 4);
+            ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
+            ctx.fillText(CONF.CHARS[this.player.myCharKey].name, 20, 18);
+
+            // Stamina (Barra fina amarela embaixo)
+            ctx.fillStyle = '#f1c40f';
+            ctx.fillRect(22, 22 + barH, (barW - 4) * (this.player.stamina / 100), 6);
+
+            // Rival
+            const rX = w - barW - 20;
+            ctx.fillStyle = '#333'; ctx.fillRect(rX, 20, barW, barH);
+            ctx.fillStyle = '#3498db'; 
+            ctx.fillRect(rX + 2, 22, (barW - 4) * (this.rival.hp / 100), barH - 4);
+            ctx.fillStyle = '#fff'; ctx.textAlign = 'right';
+            ctx.fillText(this.mode === 'SOLO' ? "TRAINING BAG" : "RIVAL", w - 20, 18);
+
+            // Tempo
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.font = "bold 60px Impact";
+            ctx.fillText(Math.ceil(this.time), w / 2, 60);
+        },
+
+        // --- SISTEMAS AUXILIARES ---
+        spawnParticles: function(x, y, count, color) {
+            for (let i = 0; i < count; i++) {
+                this.effects.push({
+                    type: 'part',
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 15,
+                    vy: (Math.random() - 0.5) * 15,
+                    life: 20 + Math.random() * 10,
+                    size: 3 + Math.random() * 5,
+                    color: color
+                });
+            }        },
+
+        spawnPopText: function(text, x, y) {
+            this.effects.push({
+                type: 'text', val: text,
+                x: x, y: y, vx: 0, vy: -2, life: 40
+            });
+        },
+
+        // --- NETCODE (Firebase Realtime) ---
+        connectNet: function() {
+            if (!this.isOnline) return;
+            
+            const myId = window.System.playerId;
+            const roomRef = window.DB.ref(`rooms/${this.roomId}`);
+            this.dbRef = roomRef;
+
+            // Registra presença
+            roomRef.child(`players/${myId}`).set({
+                charKey: this.player.myCharKey,
+                hp: 100,
+                joined: Date.now()
+            });
+            roomRef.child(`players/${myId}`).onDisconnect().remove();
+
+            // Escuta oponente
+            roomRef.child('players').on('value', snap => {
+                const players = snap.val();
+                if (!players) return;
+
+                Object.keys(players).forEach(key => {
+                    if (key !== myId) {
+                        // Atualiza dados do rival
+                        const r = players[key];
+                        this.rival.id = key;
+                        this.rival.charKey = r.charKey || 'balanced';
+                        this.rival.pose = r.pose; // Pose crua ou comprimida
+                        
+                        // Recebeu Hit?
+                        if (r.lastHitId && r.lastHitId > this.rival.lastHitId) {
+                            // Alguém me bateu (o rival diz que bateu)
+                            // Na verdade, a lógica aqui é: Eu atualizo MEU hp se eu bater?
+                            // Não, usamos autoridade do atacante.
+                            // Se O RIVAL tem um campo "hitOnId == EU", eu tomo dano.
+                        }
+                        
+                        // Se o rival atualizou o HP dele (porque eu bati nele e ele aceitou, ou eu forcei), atualiza visual
+                        if (r.hp !== undefined) this.rival.hp = r.hp;
+                    }
+                });            });
+
+            // Escuta hits globais na sala (simplificado)
+            roomRef.child('hits').on('child_added', snap => {
+                const hit = snap.val();
+                if (hit.target === myId) {
+                    // Fui atingido!
+                    this.player.hp -= hit.damage;
+                    this.hitStopTimer = CONF.HIT_STOP_MS;
+                    this.camera.shakeX = 20;
+                    window.Sfx.play(100, 'sawtooth', 0.1, 0.4); // Som de dor
+                    this.spawnPopText("OUCH!", 0, 0);
+                }
+            });
+        },
+
+        updateNet: function() {
+            if (!this.isOnline || !this.dbRef) return;
+            
+            // Envia update a 20hz (a cada 3 frames a 60fps) para economizar banda
+            if (this.frame % 3 === 0) {
+                this.dbRef.child(`players/${window.System.playerId}`).update({
+                    pose: this.player.pose, // Envia pose
+                    hp: this.player.hp
+                });
+            }
+        },
+
+        sendHit: function(dmg) {
+            if (!this.isOnline || !this.rival.id) return;
+            
+            // Envia evento de hit para a sala
+            this.dbRef.child('hits').push({
+                attacker: window.System.playerId,
+                target: this.rival.id,
+                damage: dmg,
+                timestamp: Date.now()
+            });
+        },
+
+        // --- MENUS ---
+        updateSelect: function(w, h) {
+            // Input simples via mouse clicando nas áreas (simulado)
+            // Na versão real, poderia ser levantar a mão esquerda/direita
+        },
+        
+        drawSelect: function(ctx, w, h) {
+            ctx.fillStyle = '#2c3e50';
+            ctx.fillRect(0, 0, w, h);
+            ctx.fillStyle = '#fff';            ctx.textAlign = 'center';
+            ctx.font = "40px Arial";
+            ctx.fillText("ESCOLHA SEU LUTADOR", w / 2, 100);
+
+            const keys = Object.keys(CONF.CHARS);
+            const slotW = w / keys.length;
+
+            keys.forEach((k, i) => {
+                const char = CONF.CHARS[k];
+                const x = i * slotW + slotW / 2;
+                const y = h / 2;
+                
+                // Card
+                ctx.fillStyle = k === this.player.myCharKey ? '#fff' : '#34495e';
+                if (k === this.player.myCharKey) ctx.globalAlpha = 0.2;
+                ctx.fillRect(i * slotW + 10, 150, slotW - 20, h - 200);
+                ctx.globalAlpha = 1.0;
+
+                // Avatar
+                ctx.fillStyle = char.color;
+                ctx.beginPath(); ctx.arc(x, y, 60, 0, Math.PI * 2); ctx.fill();
+                
+                // Nome
+                ctx.fillStyle = k === this.player.myCharKey ? '#f1c40f' : '#bdc3c7';
+                ctx.font = "bold 20px Arial";
+                ctx.fillText(char.name, x, y + 100);
+                
+                // Stats
+                ctx.font = "14px Arial";
+                ctx.fillStyle = '#fff';
+                ctx.fillText(`PWR: ${char.power}`, x, y + 130);
+                ctx.fillText(`SPD: ${char.speed}`, x, y + 150);
+            });
+
+            // Hack de clique para Canvas
+            if (!window.System.canvas.onclick) {
+                window.System.canvas.onclick = (e) => {
+                    const rect = window.System.canvas.getBoundingClientRect();
+                    const cx = e.clientX - rect.left;
+                    const idx = Math.floor(cx / (rect.width / keys.length));
+                    if (keys[idx]) {
+                        this.player.myCharKey = keys[idx];
+                        this.startGame('SOLO'); // Default clique = Solo, mudar logica se precisar
+                        // window.System.canvas.onclick = null; // Remove listener ao iniciar
+                    }
+                };
+            }
+        },
+
+        drawResult: function(ctx, w, h) {            ctx.fillStyle = 'rgba(0,0,0,0.8)';
+            ctx.fillRect(0, 0, w, h);
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.font = "bold 80px Impact";
+            ctx.fillText(this.player.hp > 0 ? "VENCEDOR!" : "DERROTADO", w / 2, h / 2);
+            ctx.font = "30px Arial";
+            ctx.fillText("Toque para voltar ao menu", w / 2, h / 2 + 60);
+        },
+        
+        spawnConfetti: function(x, y) {
+            for (let i = 0; i < 50; i++) {
+                this.effects.push({
+                    type: 'part', x: x, y: y,
+                    vx: (Math.random() - 0.5) * 20, vy: (Math.random() - 1) * 20,
+                    life: 100, size: 8, color: `hsl(${Math.random() * 360}, 100%, 50%)`
+                });
+            }
+        }
+    };
+
+    // REGISTRO NO SISTEMA CORE
+    window.System.registerGame('box_pro', 'Pro Boxing', '🥊', Logic, {
+        camOpacity: 0.1, // Câmera quase invisível para imersão
+        smooth: true     // Ativa suavização nativa se houver
+    });
+
+})();
