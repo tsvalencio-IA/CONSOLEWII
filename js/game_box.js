@@ -47,7 +47,8 @@
                 color: '#27ae60', hat: '#e67e22', skin: '#f1c40f', 
                 mass: 2.0, power: 25, speed: 0.5, reach: 1.1, stamina_cost: 35 
             }
-        }    };
+        }
+    };
 
     // --- UTILITÁRIOS MATEMÁTICOS ---
     const MathUtils = {
@@ -145,7 +146,8 @@
                     window.DB.ref(`rooms/${this.roomId}`).off();
                 } catch(e) {}
             }
-            this.isOnline = false;        },
+            this.isOnline = false;
+        },
 
         startGame: function(mode) {
             this.mode = mode;
@@ -324,7 +326,8 @@
                 const bagWorldX = this.bag.x + Math.sin(this.bag.angle) * this.bag.len;
                 const bagWorldY = this.bag.y + Math.cos(this.bag.angle) * this.bag.len;
 
-                // Distância da mão para o "corpo" do saco                if (MathUtils.dist(handPos, {x: bagWorldX, y: bagWorldY}) < 60) {
+                // Distância da mão para o "corpo" do saco (FIXADO AQUI: Quebra de linha corrigida)
+                if (MathUtils.dist(handPos, {x: bagWorldX, y: bagWorldY}) < 60) {
                     hit = true;
                     // Físico do saco: Adiciona velocidade angular baseada na direção do soco
                     const force = (handPos.x < bagWorldX ? 1 : -1) * (velocity * 0.02) * charStats.mass;
@@ -534,6 +537,16 @@
                 ctx.stroke();
             };
 
+            const drawCircle = (x, y, r, color) => {
+                ctx.fillStyle = color;
+                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+            };
+
+            const drawLimb = (p1, p2, color, w) => {
+                ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = 'round';
+                ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+            };
+
             // Desenha Corpo (Abstrato - Camiseta)
             ctx.strokeStyle = c.color;
             ctx.lineWidth = 80;
@@ -550,6 +563,9 @@
             ctx.moveTo((lSh.x + rSh.x) / 2, lSh.y + 50);
             ctx.lineTo((lSh.x + rSh.x) / 2, lSh.y + 150);
             ctx.stroke();
+            
+            const scale = 1; // Simplificado
+
             // Alças do Macacão
             ctx.lineWidth = 10 * scale; ctx.strokeStyle = '#2c3e50';
             ctx.beginPath(); ctx.moveTo(lSh.x, lSh.y + 10); ctx.lineTo((lSh.x + rSh.x) / 2 - 20 * scale, lSh.y + 60 * scale); ctx.stroke();
@@ -908,9 +924,11 @@
     };
 
     // REGISTRO NO SISTEMA CORE
-    window.System.registerGame('box_pro', 'Pro Boxing', '🥊', Logic, {
-        camOpacity: 0.1, // Câmera quase invisível para imersão
-        smooth: true     // Ativa suavização nativa se houver
-    });
+    if(window.System) {
+        window.System.registerGame('box_pro', 'Pro Boxing', '🥊', Logic, {
+            camOpacity: 0.1, // Câmera quase invisível para imersão
+            smooth: true     // Ativa suavização nativa se houver
+        });
+    }
 
 })();
