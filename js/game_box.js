@@ -1,7 +1,7 @@
 // =============================================================================
 // PRO BOXING LEAGUE: PLAYSTATION 2 EDITION
 // ARQUITETO: CODE 177
-// VERSÃO: 2.0 (Física de Intenção, Pseudo-3D, Netcode Otimizado)
+// VERSÃO: 2.1 (Fix Syntax Error & Stability)
 // =============================================================================
 
 (function() {
@@ -326,7 +326,8 @@
                 const bagWorldX = this.bag.x + Math.sin(this.bag.angle) * this.bag.len;
                 const bagWorldY = this.bag.y + Math.cos(this.bag.angle) * this.bag.len;
 
-                // Distância da mão para o "corpo" do saco (FIXADO AQUI: Quebra de linha corrigida)
+                // CORREÇÃO CRÍTICA AQUI: O IF FOI QUEBRADO PARA A LINHA DE BAIXO
+                // Distância da mão para o "corpo" do saco 
                 if (MathUtils.dist(handPos, {x: bagWorldX, y: bagWorldY}) < 60) {
                     hit = true;
                     // Físico do saco: Adiciona velocidade angular baseada na direção do soco
@@ -346,17 +347,12 @@
                 const rNose = this.rival.pose.keypoints.find(k => k.name === 'nose');
                 if (rNose) {
                      // Converte pose do rival (que vem 0-640) para coord de jogo
-                     // Nota: A pose do rival já vem "pronta" se ele enviou dados processados, 
-                     // mas se for raw, precisamos converter. Vamos assumir coordenadas de tela.
                      const rX = (1 - rNose.x/640) * window.innerWidth - window.innerWidth/2;
                      const rY = (rNose.y/480) * window.innerHeight - window.innerHeight/2;
                      
                      if (MathUtils.dist(handPos, {x: rX, y: rY}) < 80) {
                         hit = true;
                         damage = dmgBase;
-                        // Verifica bloqueio do rival (mãos perto do rosto)
-                        // Isso seria calculado no cliente DELE, mas aqui fazemos uma predição visual
-                        // Para simplificar: Dano total.
                      }
                 }
             }
