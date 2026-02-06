@@ -1,6 +1,6 @@
 // =============================================================================
-// SUPER BOXING STADIUM: CHAMPIONSHIP EDITION (FINAL FIX)
-// ARQUITETO: SENIOR DEV - RESTORED FULL VISUALS + WORKING CALIBRATION
+// SUPER BOXING STADIUM: CHAMPIONSHIP EDITION (MASTER V3)
+// ARQUITETO: SENIOR DEV - ROBUST TRACKING & REALISTIC ARMS
 // =============================================================================
 
 (function() {
@@ -26,16 +26,17 @@
     const CONF = {
         ROUNDS: 3,
         ROUND_TIME: 60,
-        VELOCITY_THRESH: 8,
-        BLOCK_DIST: 120,
-        SMOOTHING: 0.85
+        VELOCITY_THRESH: 6,   // Reduzido para facilitar soco
+        BLOCK_DIST: 130,
+        SMOOTHING: 0.7,       // Mais suave para evitar tremedeira
+        MIN_CONFIDENCE: 0.15  // Aceita detecção mesmo com confiança baixa
     };
 
     const Utils = {
         dist: (x1, y1, x2, y2) => Math.hypot(x2 - x1, y2 - y1),
         toScreen: (kp, w, h) => ({ x: (1 - kp.x / 640) * w, y: (kp.y / 480) * h }),
         isInside: (x, y, btn) => {
-            const pad = 20;
+            const pad = 30; // Hitbox bem generosa
             return x >= btn.x - pad && x <= btn.x + btn.w + pad && y >= btn.y - pad && y <= btn.y + btn.h + pad;
         },
         lerp: (a, b, t) => a + (b - a) * t
@@ -60,7 +61,7 @@
         round: 1,
         frame: 0,
         
-        // --- JOGADOR (COM DADOS DE CALIBRAÇÃO) ---
+        // --- JOGADOR ---
         p1: { 
             hp: 0, maxHp: 0, stamina: 100, guard: false, charId: 0,
             head: {x:0, y:0}, 
@@ -70,14 +71,10 @@
                 r: {x:0, y:0, z:0, state:'IDLE', vel:0} 
             },
             score: 0,
-            // Calibração
-            calib: {
-                maxReach: 150, // Extensão máxima detectada
-                done: false,
-                progress: 0
-            }
+            calib: { maxReach: 150, done: false, progress: 0 }
         },
         
+        // --- OPONENTE ---
         p2: { 
             hp: 0, maxHp: 0, guard: false, charId: 0, id: null,
             head: {x:0, y:0},
@@ -132,8 +129,7 @@
                     else if (checkBtn('btnCalib')) this.startCalibration();
                 }
                 else if (this.state === 'CALIBRATE') {
-                    // Só permite avançar se calibrar um pouco
-                    if (checkBtn('btnFinishCalib') && this.p1.calib.progress > 20) this.finishCalibration();
+                    if (checkBtn('btnFinishCalib')) this.finishCalibration();
                 }
                 else if (this.state === 'GAMEOVER') {
                     if (checkBtn('btnMenu')) this.init();
@@ -157,7 +153,7 @@
         startCalibration: function() {
             this.state = 'CALIBRATE';
             this.p1.calib.progress = 0;
-            this.p1.calib.maxReach = 100; // Reset para mínimo
+            this.p1.calib.maxReach = 120; // Valor base seguro
             window.Sfx.click();
         },
 
@@ -174,13 +170,15 @@
             this.p1.score = 0;
             this.p1.stamina = 100;
             
-            // Inicializa posições para evitar glitch
+            // Inicializa posições padrão para evitar erro antes da detecção
             const w = window.System.canvas.width;
             const h = window.System.canvas.height;
             this.p1.head = {x: w/2, y: h/2};
             this.p1.shoulders = {l: {x: w*0.3, y: h*0.8}, r: {x: w*0.7, y: h*0.8}};
-            this.p1.hands.l = {x: w*0.3, y: h*0.7, z:0, state:'IDLE', vel:0};
-            this.p1.hands.r = {x: w*0.7, y: h*0.7, z:0, state:'IDLE', vel:0};
+            this.p1.hands = { 
+                l: {x: w*0.3, y: h*0.7, z:0, state:'IDLE', vel:0}, 
+                r: {x: w*0.7, y: h*0.7, z:0, state:'IDLE', vel:0} 
+            };
             
             if (this.isOnline) {
                 this.connectLobby();
@@ -237,13 +235,13 @@
         },
 
         // -----------------------------------------------------------------
-        // UPDATE LOOP
+        // LOOP PRINCIPAL
         // -----------------------------------------------------------------
         update: function(ctx, w, h, pose) {
             this.frame++;
             this.uiButtons = {}; 
 
-            // BG Menus
+            // Fundo Padrão
             if (this.state !== 'FIGHT') {
                 const g = ctx.createLinearGradient(0,0,0,h);
                 g.addColorStop(0, '#1a1a2e'); g.addColorStop(1, '#16213e');
@@ -257,7 +255,7 @@
             if (this.state === 'LOBBY') { this.uiLobby(ctx, w, h); return; }
             if (this.state === 'GAMEOVER') { this.uiGameOver(ctx, w, h); return; }
 
-            // === FIGHT ===
+            // === FIGHT GAMEPLAY ===
             this.processInput(w, h, pose);
             
             if (this.isOnline) this.syncOnline();
@@ -281,75 +279,36 @@
             return Math.floor(this.p1.score);
         },
 
-        // --- INPUT & CALIBRATION LOGIC ---
+        // --- TRACKING & FÍSICA ---
         
-        processCalibration: function(w, h, pose) {
-            if (!pose || !pose.keypoints) return;
-            const k = pose.keypoints;
-            
-            // Pontos chave
-            const nose = k[0] && k[0].score > 0.3 ? Utils.toScreen(k[0], w, h) : {x:w/2, y:h/3};
-            const lWr = k[9] && k[9].score > 0.3 ? Utils.toScreen(k[9], w, h) : null;
-            const rWr = k[10] && k[10].score > 0.3 ? Utils.toScreen(k[10], w, h) : null;
-
-            // Desenha Esqueleto de Calibração
-            const drawPoint = (p, c) => {
-                if(!p) return;
-                ctx.fillStyle = c; ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI*2); ctx.fill();
-            };
-            
-            drawPoint(nose, '#fff');
-            drawPoint(lWr, '#0ff');
-            drawPoint(rWr, '#0ff');
-
-            // Lógica: Medir distância máxima do nariz ao pulso
-            if (lWr && rWr) {
-                const dL = Utils.dist(nose.x, nose.y, lWr.x, lWr.y);
-                const dR = Utils.dist(nose.x, nose.y, rWr.x, rWr.y);
-                const currentMax = Math.max(dL, dR);
-
-                // Atualiza máximo encontrado
-                if (currentMax > this.p1.calib.maxReach) {
-                    this.p1.calib.maxReach = currentMax;
-                    // Feedback visual de "Recorde"
-                    this.spawnMsg(w/2, h/2, "LENDO...", "#0ff", 5);
-                }
-
-                // Incrementa progresso se houver movimento (simulado para facilitar)
-                if (currentMax > 100) {
-                    this.p1.calib.progress = Math.min(100, this.p1.calib.progress + 2); // +2 para ser mais rápido
-                }
-            }
-        },
-
         processInput: function(w, h, pose) {
             if (!pose || !pose.keypoints) return;
             const k = pose.keypoints;
             
-            const nose = k[0] && k[0].score > 0.3 ? Utils.toScreen(k[0], w, h) : this.p1.head;
-            const lSh  = k[5] && k[5].score > 0.3 ? Utils.toScreen(k[5], w, h) : {x: w*0.3, y: h};
-            const rSh  = k[6] && k[6].score > 0.3 ? Utils.toScreen(k[6], w, h) : {x: w*0.7, y: h};
-            const lWr  = k[9] && k[9].score > 0.3 ? Utils.toScreen(k[9], w, h) : this.p1.hands.l;
-            const rWr  = k[10] && k[10].score > 0.3 ? Utils.toScreen(k[10], w, h) : this.p1.hands.r;
+            // Usando Threshold baixo para garantir detecção
+            const thresh = CONF.MIN_CONFIDENCE;
+            
+            // 0:Nariz, 5:OmbroE, 6:OmbroD, 9:PulsoE, 10:PulsoD
+            const nose = (k[0] && k[0].score > thresh) ? Utils.toScreen(k[0], w, h) : this.p1.head;
+            const lSh  = (k[5] && k[5].score > thresh) ? Utils.toScreen(k[5], w, h) : {x: w*0.3, y: h+50};
+            const rSh  = (k[6] && k[6].score > thresh) ? Utils.toScreen(k[6], w, h) : {x: w*0.7, y: h+50};
+            const lWr  = (k[9] && k[9].score > thresh) ? Utils.toScreen(k[9], w, h) : this.p1.hands.l;
+            const rWr  = (k[10] && k[10].score > thresh) ? Utils.toScreen(k[10], w, h) : this.p1.hands.r;
 
-            // Aplica Cabeça
+            // Aplica Movimento com Suavização
             this.p1.head.x = Utils.lerp(this.p1.head.x, nose.x, CONF.SMOOTHING);
             this.p1.head.y = Utils.lerp(this.p1.head.y, nose.y, CONF.SMOOTHING);
             
-            // Ombros para visualização
-            this.p1.shoulders.l = { x: lSh.x, y: h + 50 }; 
-            this.p1.shoulders.r = { x: rSh.x, y: h + 50 };
+            this.p1.shoulders.l = { x: lSh.x, y: h + 100 }; // Ombros visuais (POV) fixos na base/seguindo levemente
+            this.p1.shoulders.r = { x: rSh.x, y: h + 100 };
 
-            // Processa Mãos com Fator de Calibração
             this.updateHandLogic(this.p1.hands.l, lWr, 'left', w, h);
             this.updateHandLogic(this.p1.hands.r, rWr, 'right', w, h);
 
-            // Guarda (Calibrada)
+            // Guarda
             const dL = Utils.dist(this.p1.hands.l.x, this.p1.hands.l.y, this.p1.head.x, this.p1.head.y);
             const dR = Utils.dist(this.p1.hands.r.x, this.p1.hands.r.y, this.p1.head.x, this.p1.head.y);
-            // Block dist usa uma % do alcance máximo calibrado
-            const safeDist = this.p1.calib.maxReach * 0.6; // Ajustado
-            this.p1.guard = (dL < safeDist && dR < safeDist);
+            this.p1.guard = (dL < CONF.BLOCK_DIST && dR < CONF.BLOCK_DIST);
             
             if (this.p1.stamina < 100) this.p1.stamina += 0.4;
         },
@@ -363,7 +322,7 @@
             hand.y = Utils.lerp(hand.y, target.y, CONF.SMOOTHING);
             hand.vel = velocity;
 
-            // Soco Detectado
+            // Detecta Soco
             if (hand.state === 'IDLE') {
                 if (velocity > CONF.VELOCITY_THRESH && this.p1.stamina > 10) {
                     hand.state = 'PUNCH';
@@ -374,13 +333,8 @@
             }
 
             if (hand.state === 'PUNCH') {
-                // Aqui usamos a calibração!
                 hand.z += 25; 
-                
-                // Colisão
                 if (hand.z > 50 && hand.z < 90) this.checkHit(side, hand, w, h);
-                
-                // Limite visual
                 if (hand.z >= 130) hand.state = 'RETRACT';
             } 
             else if (hand.state === 'RETRACT') {
@@ -400,22 +354,18 @@
                 } else {
                     const power = CHARACTERS[this.p1.charId].power;
                     const dmg = Math.floor(5 * power + (hand.vel * 0.1)); 
-                    
                     this.p2.hp -= dmg;
                     this.p1.score += dmg * 10;
-                    
                     this.spawnParticle(rX, rY, '#ff0');
                     this.spawnMsg(rX, rY, dmg, "#f00");
                     window.Gfx.shakeScreen(15);
                     window.Sfx.hit();
-                    
                     if (this.isOnline) this.dbRef.child('players/' + this.p2.id).update({ hp: this.p2.hp });
                 }
                 hand.state = 'RETRACT';
             }
         },
 
-        // --- AI & SYNC ---
         updateAI: function(w, h) {
             const stats = CHARACTERS[this.p2.charId];
             const targetX = (w/2) + Math.sin(this.frame * 0.04 * stats.speed) * 120;
@@ -483,7 +433,7 @@
         },
 
         // -----------------------------------------------------------------
-        // UI & TELAS (VMIN SCALING)
+        // UI & TELAS
         // -----------------------------------------------------------------
         
         drawBtn: function(ctx, key, txt, x, y, w, h, active=false) {
@@ -540,24 +490,52 @@
             this.drawBtn(ctx, 'btnCalib', "CALIBRAR", w/2 + 10, h*0.8, btnW, btnH, true);
         },
 
-        // --- TELA DE CALIBRAÇÃO (NOVO) ---
+        // --- TELA DE CALIBRAÇÃO ROBUSTA ---
         uiCalibrate: function(ctx, w, h, pose) {
-            // Fundo Tech
             ctx.fillStyle = "#111"; ctx.fillRect(0,0,w,h);
             const vmin = Math.min(w, h);
 
-            // Título
-            ctx.fillStyle = "#0ff"; ctx.font = `bold ${vmin*0.06}px 'Russo One'`; ctx.textAlign="center";
-            ctx.fillText("CALIBRAÇÃO DE BRAÇO", w/2, h*0.15);
+            // Feedback de Rastreamento (IMPORTANTÍSSIMO)
+            let tracking = false;
+            let handDist = 0;
 
-            // Instrução
-            ctx.fillStyle = "#fff"; ctx.font = `bold ${vmin*0.04}px sans-serif`;
-            ctx.fillText("DÊ SOCOS NO AR PARA MEDIR!", w/2, h*0.25);
+            if (pose && pose.keypoints) {
+                const k = pose.keypoints;
+                const thresh = CONF.MIN_CONFIDENCE;
+                
+                const drawP = (i, color) => {
+                    if (k[i] && k[i].score > thresh) {
+                        const p = Utils.toScreen(k[i], w, h);
+                        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(p.x, p.y, 20, 0, Math.PI*2); ctx.fill();
+                        ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+                        return p;
+                    }
+                    return null;
+                };
 
-            // Processa dados de calibração
-            this.processCalibration(w, h, pose);
+                const n = drawP(0, '#fff'); // Nariz
+                const l = drawP(9, '#0ff'); // Mão E
+                const r = drawP(10, '#0ff'); // Mão D
 
-            // Barra de Progresso Circular
+                if (n && (l || r)) {
+                    tracking = true;
+                    // Lógica de progresso baseada em movimento
+                    if (l) handDist = Math.max(handDist, Utils.dist(n.x, n.y, l.x, l.y));
+                    if (r) handDist = Math.max(handDist, Utils.dist(n.x, n.y, r.x, r.y));
+                    
+                    if (handDist > this.p1.calib.maxReach) this.p1.calib.maxReach = handDist;
+                    
+                    // Preenche a barra se detectar movimento dos braços
+                    if (handDist > 50) this.p1.calib.progress = Math.min(100, this.p1.calib.progress + 1.5);
+                }
+            }
+
+            // Título e Status
+            ctx.fillStyle = tracking ? "#0f0" : "#f00"; 
+            ctx.font = `bold ${vmin*0.06}px 'Russo One'`; ctx.textAlign="center";
+            ctx.fillText(tracking ? "DETECTADO! MEXA OS BRAÇOS" : "PROCURANDO VOCÊ...", w/2, h*0.15);
+
+            // Barra Circular
             const cx = w/2, cy = h*0.5;
             const radius = vmin * 0.2;
             
@@ -566,20 +544,13 @@
 
             const endAngle = (Math.PI * 2) * (this.p1.calib.progress / 100) - (Math.PI/2);
             ctx.beginPath(); ctx.arc(cx, cy, radius, -Math.PI/2, endAngle);
-            ctx.strokeStyle = this.p1.calib.progress >= 100 ? "#0f0" : "#0ff"; 
-            ctx.lineWidth = 20; ctx.stroke();
+            ctx.strokeStyle = "#0f0"; ctx.lineWidth = 20; ctx.stroke();
 
-            // Valor do Alcance
-            ctx.fillStyle = "#fff"; ctx.font = `bold ${vmin*0.08}px 'Russo One'`;
-            ctx.fillText(Math.floor(this.p1.calib.maxReach), cx, cy + vmin*0.03);
-            ctx.font = `bold ${vmin*0.03}px sans-serif`;
-            ctx.fillText("ALCANCE MAX", cx, cy + vmin*0.08);
-
-            // Botão Pronto (Aparece se tiver progresso)
+            // Botão Confirmar (Aparece se > 20%)
             if (this.p1.calib.progress > 20) {
                 const btnW = vmin * 0.5;
                 const btnH = vmin * 0.12;
-                this.drawBtn(ctx, 'btnFinishCalib', "LUTAR!", w/2 - btnW/2, h*0.8, btnW, btnH, true);
+                this.drawBtn(ctx, 'btnFinishCalib', "LUTAR AGORA!", w/2 - btnW/2, h*0.8, btnW, btnH, true);
             }
         },
 
@@ -609,14 +580,21 @@
             this.drawBtn(ctx, 'btnMenu', "MENU", w/2 - btnW/2, h*0.7, btnW, btnH, true);
         },
 
-        // --- RENDER VISUAL (IK BRAÇOS) ---
+        // --- RENDER VISUAL MELHORADO (BRAÇOS DE LUTADOR) ---
         drawArmSegment: function(ctx, shoulder, hand, color, width) {
-            ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
             const mx = (shoulder.x + hand.x) / 2;
             const my = (shoulder.y + hand.y) / 2;
             const offsetDir = (hand.x < shoulder.x) ? -1 : 1;
-            const bend = 30; 
+            const bend = 40; 
             const elbowX = mx + (offsetDir * bend); const elbowY = my;
+            
+            // Contorno (Musculatura)
+            ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = width + 4;
+            ctx.beginPath(); ctx.moveTo(shoulder.x, shoulder.y); ctx.quadraticCurveTo(elbowX, elbowY, hand.x, hand.y); ctx.stroke();
+            
+            // Preenchimento (Pele)
+            ctx.strokeStyle = color; ctx.lineWidth = width;
             ctx.beginPath(); ctx.moveTo(shoulder.x, shoulder.y); ctx.quadraticCurveTo(elbowX, elbowY, hand.x, hand.y); ctx.stroke();
         },
 
@@ -627,8 +605,8 @@
             ctx.fillStyle = bodyG; ctx.beginPath(); ctx.moveTo(cx-50, cy+60); ctx.lineTo(cx+50, cy+60); ctx.lineTo(cx+30, cy+250); ctx.lineTo(cx-30, cy+250); ctx.fill();
             const lHandVis = { x: p.hands.l.x, y: p.hands.l.y + (p.hands.l.z * 1.5) };
             const rHandVis = { x: p.hands.r.x, y: p.hands.r.y + (p.hands.r.z * 1.5) };
-            this.drawArmSegment(ctx, p.shoulders.l, lHandVis, char.color, 18);
-            this.drawArmSegment(ctx, p.shoulders.r, rHandVis, char.color, 18);
+            this.drawArmSegment(ctx, p.shoulders.l, lHandVis, char.skin, 20);
+            this.drawArmSegment(ctx, p.shoulders.r, rHandVis, char.skin, 20);
             ctx.fillStyle = char.skin; ctx.beginPath(); ctx.arc(cx, cy, 50, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = char.hat; ctx.beginPath(); ctx.arc(cx, cy-20, 52, Math.PI, 0); ctx.fill(); ctx.fillRect(cx-55, cy-20, 110, 15);
             ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx, cy-35, 15, 0, Math.PI*2); ctx.fill();
@@ -640,12 +618,13 @@
 
         drawPlayer: function(ctx, p, w, h) {
             const char = CHARACTERS[p.charId];
-            // Visual Z adjust for POV
             const lHandVis = { x: p.hands.l.x, y: p.hands.l.y + (100 - p.hands.l.z) };
             const rHandVis = { x: p.hands.r.x, y: p.hands.r.y + (100 - p.hands.r.z) };
-            // Braços saem de baixo (POV)
-            this.drawArmSegment(ctx, {x: w*0.1, y: h+50}, lHandVis, char.color, 40); 
-            this.drawArmSegment(ctx, {x: w*0.9, y: h+50}, rHandVis, char.color, 40); 
+            
+            // Braços saindo de baixo (POV Musculoso)
+            this.drawArmSegment(ctx, {x: w*0.1, y: h+80}, lHandVis, char.skin, 45); 
+            this.drawArmSegment(ctx, {x: w*0.9, y: h+80}, rHandVis, char.skin, 45); 
+            
             ctx.globalAlpha = 0.9;
             this.drawGlove(ctx, p.hands.l, char.color, true);
             this.drawGlove(ctx, p.hands.r, char.color, true);
