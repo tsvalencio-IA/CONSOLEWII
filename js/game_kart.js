@@ -667,8 +667,8 @@ trackLength = 0;
                     }
                 };
                 // Correção IA Minimapa: Pontos maiores e garantindo render
-               d.rivals.forEach(r => drawDot(r.pos, '#ffee00', 14)); // IA menor
-drawDot(d.pos, '#ff0000', 18);
+               d.rivals.forEach(r => drawDot(r.pos, '#ffee00', 18)); // IA menor
+drawDot(d.pos, '#ff0000', 22);
                 ctx.restore();
             }
 
