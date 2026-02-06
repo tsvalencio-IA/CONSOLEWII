@@ -338,7 +338,7 @@ trackLength = 0;
                         d.virtualWheel.isHigh = true;
                         if (d.gestureTimer > 25 && d.nitro > 20 && !d.turboLock) {
                             d.turboLock = true;
-                            d.pushMsg("TURBO GESTURE!", "#0ff");
+                            d.pushMsg("TURBO ON!", "#0ff");
                             window.Sfx.play(800, 'square', 0.1, 0.1);
                         }
                     } else { d.gestureTimer = 0; d.virtualWheel.isHigh = false; }
