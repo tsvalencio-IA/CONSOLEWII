@@ -1,6 +1,6 @@
 // =============================================================================
-// SUPER BOXING STADIUM: CHAMPIONSHIP EDITION (MASTER V5 - CALIBRATION PRO)
-// ARQUITETO: SENIOR DEV - 90 DEGREE CALIBRATION & FULL ARM SKELETON
+// SUPER BOXING STADIUM: CHAMPIONSHIP EDITION (FINAL RELEASE V6)
+// ARQUITETO: SENIOR DEV - FIXED STATE TRANSITION & FULL VISUALS
 // =============================================================================
 
 (function() {
@@ -67,16 +67,16 @@
             hp: 0, maxHp: 0, stamina: 100, guard: false, charId: 0,
             head: {x:0, y:0}, 
             shoulders: { l: {x:0,y:0}, r: {x:0,y:0} },
-            elbows: { l: {x:0,y:0}, r: {x:0,y:0} }, // Cotovelos reais
+            elbows: { l: {x:0,y:0}, r: {x:0,y:0} }, 
             hands: { 
                 l: {x:0, y:0, z:0, state:'IDLE', vel:0}, 
                 r: {x:0, y:0, z:0, state:'IDLE', vel:0} 
             },
             score: 0,
             calib: { 
-                armLength: 100, // Comprimento total do braço (ombro->punho esticado)
-                forearmLength: 50, // Antebraço (cotovelo->punho)
-                upperArmLength: 50, // Braço (ombro->cotovelo)
+                armLength: 100, 
+                forearmLength: 50, 
+                upperArmLength: 50, 
                 done: false, 
                 progress: 0 
             }
@@ -138,7 +138,6 @@
                     else if (checkBtn('btnCalib')) this.startCalibration();
                 }
                 else if (this.state === 'CALIBRATE') {
-                    // Só permite avançar se calibrar um pouco
                     if (checkBtn('btnFinishCalib') && this.p1.calib.progress > 20) this.finishCalibration();
                 }
                 else if (this.state === 'GAMEOVER') {
@@ -163,10 +162,7 @@
         startCalibration: function() {
             this.state = 'CALIBRATE';
             this.p1.calib.progress = 0;
-            // Reset valores padrão seguros
-            this.p1.calib.armLength = 120;
-            this.p1.calib.upperArmLength = 60;
-            this.p1.calib.forearmLength = 60;
+            this.p1.calib.armLength = 120; // Default
             window.Sfx.click();
         },
 
@@ -197,10 +193,18 @@
             if (this.isOnline) {
                 this.connectLobby();
             } else {
+                // Configura oponente OFFLINE (IA)
                 this.p2.charId = Math.floor(Math.random() * CHARACTERS.length);
                 const aiStats = CHARACTERS[this.p2.charId];
                 this.p2.maxHp = aiStats.hp; this.p2.hp = aiStats.hp;
                 this.p2.isRemote = false;
+                
+                // Inicializa IA
+                this.p2.head = {x: w/2, y: h/3};
+                this.p2.shoulders = {l: {x: w/2 - 60, y: h/3 + 100}, r: {x: w/2 + 60, y: h/3 + 100}};
+                this.p2.elbows = {l: {x: w/2 - 80, y: h/3 + 150}, r: {x: w/2 + 80, y: h/3 + 150}};
+                this.p2.hands = { l: {x: w/2 - 50, y: h/3 + 80, z:0, state:'IDLE'}, r: {x: w/2 + 50, y: h/3 + 80, z:0, state:'IDLE'} };
+
                 this.state = 'FIGHT';
                 this.timer = CONF.ROUND_TIME * 60;
                 window.System.msg("ROUND 1");
@@ -256,6 +260,7 @@
             this.frame++;
             this.uiButtons = {}; 
 
+            // BG Menus
             if (this.state !== 'FIGHT') {
                 const g = ctx.createLinearGradient(0,0,0,h);
                 g.addColorStop(0, '#1a1a2e'); g.addColorStop(1, '#16213e');
@@ -300,7 +305,6 @@
             const k = pose.keypoints;
             const thresh = CONF.MIN_CONFIDENCE;
             
-            // 0:Nariz, 5:OmbroE, 6:OmbroD, 7:CotoveloE, 8:CotoveloD, 9:PunhoE, 10:PunhoD
             const nose = (k[0] && k[0].score > thresh) ? Utils.toScreen(k[0], w, h) : this.p1.head;
             const lSh  = (k[5] && k[5].score > thresh) ? Utils.toScreen(k[5], w, h) : {x: w*0.3, y: h+50};
             const rSh  = (k[6] && k[6].score > thresh) ? Utils.toScreen(k[6], w, h) : {x: w*0.7, y: h+50};
@@ -312,17 +316,15 @@
             // Suavização
             const s = CONF.SMOOTHING;
             this.p1.head = Utils.lerpPoint(this.p1.head, nose, s);
-            
             this.p1.elbows.l = Utils.lerpPoint(this.p1.elbows.l, lEl, s);
             this.p1.elbows.r = Utils.lerpPoint(this.p1.elbows.r, rEl, s);
 
-            // Base Dinâmica dos Braços (POV)
+            // POV - Base dinâmica
             const distL = Math.abs(lWr.x - w/2);
             const distR = Math.abs(rWr.x - w/2);
-            const guardFactorL = Math.max(0, 1 - (distL / (w*0.3))); // 1.0 = perto do centro
+            const guardFactorL = Math.max(0, 1 - (distL / (w*0.3)));
             const guardFactorR = Math.max(0, 1 - (distR / (w*0.3)));
 
-            // Interpola a base: canto da tela (normal) <-> centro inferior (guarda)
             const baseLX = Utils.lerp(w*0.1, w*0.4, guardFactorL);
             const baseRX = Utils.lerp(w*0.9, w*0.6, guardFactorR);
 
@@ -334,8 +336,8 @@
 
             const dL = Utils.dist(this.p1.hands.l.x, this.p1.hands.l.y, this.p1.head.x, this.p1.head.y);
             const dR = Utils.dist(this.p1.hands.r.x, this.p1.hands.r.y, this.p1.head.x, this.p1.head.y);
-            // Guarda baseada no tamanho do braço calibrado
-            const safeDist = this.p1.calib.armLength * 0.7; // Ex: 70% do braço perto do rosto
+            
+            const safeDist = this.p1.calib.armLength * 0.7; 
             this.p1.guard = (dL < safeDist && dR < safeDist);
             
             if (this.p1.stamina < 100) this.p1.stamina += 0.4;
@@ -360,9 +362,6 @@
             }
 
             if (hand.state === 'PUNCH') {
-                // Extensão baseada na calibração: 
-                // Quanto mais longe do ombro/rosto, maior o Z
-                // Simulação Arcade para Z:
                 hand.z += 25; 
                 if (hand.z > 50 && hand.z < 90) this.checkHit(side, hand, w, h);
                 if (hand.z >= 130) hand.state = 'RETRACT';
@@ -404,7 +403,6 @@
             this.p2.shoulders.l = { x: this.p2.head.x - 60, y: this.p2.head.y + 100 };
             this.p2.shoulders.r = { x: this.p2.head.x + 60, y: this.p2.head.y + 100 };
             
-            // Cotovelos da IA (simulados)
             this.p2.elbows.l = { x: this.p2.head.x - 80, y: this.p2.head.y + 150 };
             this.p2.elbows.r = { x: this.p2.head.x + 80, y: this.p2.head.y + 150 };
 
@@ -456,7 +454,7 @@
                     hp: this.p1.hp,
                     pose: {
                         head: { x: Math.floor(this.p1.head.x), y: Math.floor(this.p1.head.y) },
-                        elbows: { // Envia cotovelos reais
+                        elbows: { 
                             l: { x: Math.floor(this.p1.elbows.l.x), y: Math.floor(this.p1.elbows.l.y) },
                             r: { x: Math.floor(this.p1.elbows.r.x), y: Math.floor(this.p1.elbows.r.y) }
                         },
@@ -528,61 +526,45 @@
             this.drawBtn(ctx, 'btnCalib', "CALIBRAR", w/2 + 10, h*0.8, btnW, btnH, true);
         },
 
-        // --- TELA DE CALIBRAÇÃO ROBUSTA ---
         uiCalibrate: function(ctx, w, h, pose) {
             ctx.fillStyle = "#111"; ctx.fillRect(0,0,w,h);
             const vmin = Math.min(w, h);
             let tracking = false;
 
-            // Desenho do esqueleto guia (i_O_i)
-            ctx.strokeStyle = "rgba(255,255,255,0.2)";
-            ctx.lineWidth = 10;
+            // Esqueleto Guia
+            ctx.strokeStyle = "rgba(255,255,255,0.2)"; ctx.lineWidth = 10;
             const cx = w/2, cy = h*0.4;
-            // Cabeça
             ctx.beginPath(); ctx.arc(cx, cy, 30, 0, Math.PI*2); ctx.stroke();
-            // Tronco
             ctx.beginPath(); ctx.moveTo(cx, cy+30); ctx.lineTo(cx, cy+150); ctx.stroke();
-            // Braços em L (90 graus para cima)
-            // Esq
             ctx.beginPath(); ctx.moveTo(cx, cy+50); ctx.lineTo(cx-100, cy+50); ctx.lineTo(cx-100, cy-50); ctx.stroke();
-            // Dir
             ctx.beginPath(); ctx.moveTo(cx, cy+50); ctx.lineTo(cx+100, cy+50); ctx.lineTo(cx+100, cy-50); ctx.stroke();
 
-            // Rastreamento e Medição
+            // Calibração
             if (pose && pose.keypoints) {
                 const k = pose.keypoints;
                 const thresh = CONF.MIN_CONFIDENCE;
                 
-                // Pontos necessários: 5,6(Ombros), 7,8(Cotovelos), 9,10(Punhos)
                 if (k[5]&&k[6]&&k[7]&&k[8]&&k[9]&&k[10] && 
                     k[5].score>thresh && k[6].score>thresh && k[9].score>thresh && k[10].score>thresh) {
                     
                     tracking = true;
                     
-                    // Converte coordenadas
                     const lS = Utils.toScreen(k[5], w, h); const rS = Utils.toScreen(k[6], w, h);
                     const lE = Utils.toScreen(k[7], w, h); const rE = Utils.toScreen(k[8], w, h);
                     const lW = Utils.toScreen(k[9], w, h); const rW = Utils.toScreen(k[10], w, h);
 
-                    // Desenha o que está sendo visto
                     const drawLimb = (p1, p2, c) => {
                         ctx.strokeStyle=c; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke();
                     };
                     drawLimb(lS, lE, '#0f0'); drawLimb(lE, lW, '#0f0');
                     drawLimb(rS, rE, '#0f0'); drawLimb(rE, rW, '#0f0');
 
-                    // Medição (Braço + Antebraço)
-                    const upperL = Utils.dist(lS, lE); const foreL = Utils.dist(lE, lW);
-                    const upperR = Utils.dist(rS, rE); const foreR = Utils.dist(rE, rW);
-                    
-                    const totalL = upperL + foreL;
-                    const totalR = upperR + foreR;
+                    const totalL = Utils.dist(lS, lE) + Utils.dist(lE, lW);
+                    const totalR = Utils.dist(rS, rE) + Utils.dist(rE, rW);
                     const avgLen = (totalL + totalR) / 2;
 
-                    // Verifica se está na pose (Punhos acima dos cotovelos, cotovelos nivelados com ombros aprox)
-                    const isPoseCorrect = (lW.y < lE.y) && (rW.y < rE.y); // Punhos para cima
-
-                    if (isPoseCorrect) {
+                    // Verifica T-Pose Modificada
+                    if ((lW.y < lE.y) && (rW.y < rE.y)) { 
                         this.p1.calib.armLength = (this.p1.calib.armLength * 0.9) + (avgLen * 0.1);
                         this.p1.calib.progress = Math.min(100, this.p1.calib.progress + 2);
                     }
@@ -593,7 +575,6 @@
             ctx.font = `bold ${vmin*0.06}px 'Russo One'`; ctx.textAlign="center";
             ctx.fillText(tracking ? "MANTENHA A POSE!" : "FAÇA A POSE i_O_i", w/2, h*0.15);
 
-            // Barra
             ctx.fillStyle = "#333"; ctx.fillRect(w*0.2, h*0.8, w*0.6, 20);
             ctx.fillStyle = "#0f0"; ctx.fillRect(w*0.2, h*0.8, w*0.6 * (this.p1.calib.progress/100), 20);
 
@@ -603,46 +584,19 @@
             }
         },
 
-        uiLobby: function(ctx, w, h) {
-            const vmin = Math.min(w, h);
-            ctx.fillStyle = "#000"; ctx.fillRect(0,0,w,h);
-            ctx.fillStyle = "#fff"; ctx.textAlign="center"; ctx.font = `bold ${vmin*0.08}px 'Russo One'`;
-            ctx.fillText("AGUARDANDO...", w/2, h/2);
-            const rot = (Date.now() / 500) * Math.PI;
-            ctx.save(); ctx.translate(w/2, h/2 + vmin*0.2); ctx.rotate(rot);
-            ctx.strokeStyle = "#fff"; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(0,0,vmin*0.1,0, 5); ctx.stroke();
-            ctx.restore();
-        },
-
-        uiGameOver: function(ctx, w, h) {
-            const vmin = Math.min(w, h);
-            ctx.fillStyle = "rgba(0,0,0,0.85)"; ctx.fillRect(0,0,w,h);
-            const win = this.p1.hp > 0;
-            ctx.fillStyle = win ? "#f1c40f" : "#e74c3c";
-            ctx.font = `bold ${vmin*0.15}px 'Russo One'`; ctx.textAlign="center";
-            ctx.fillText(win ? "VITÓRIA!" : "DERROTA", w/2, h*0.4);
-            ctx.fillStyle = "#fff"; ctx.font = `${vmin*0.06}px sans-serif`;
-            ctx.fillText("SCORE: " + this.p1.score, w/2, h*0.55);
-            const btnW = vmin * 0.6; const btnH = vmin * 0.15;
-            this.drawBtn(ctx, 'btnMenu', "MENU", w/2 - btnW/2, h*0.7, btnW, btnH, true);
-        },
-
-        // --- RENDER VISUAL MELHORADO (IK REAL) ---
+        // --- RENDER ---
         drawArmSegment: function(ctx, shoulder, elbow, hand, color, width) {
             ctx.lineCap = 'round'; ctx.lineJoin = 'round';
             const mx = (shoulder.x + hand.x) / 2;
             const my = (shoulder.y + hand.y) / 2;
-            
-            // Segmento 1: Ombro -> Cotovelo
-            ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = width + 4; // Contorno
-            ctx.beginPath(); ctx.moveTo(shoulder.x, shoulder.y); ctx.lineTo(elbow.x, elbow.y); ctx.stroke();
-            ctx.strokeStyle = color; ctx.lineWidth = width;
-            ctx.beginPath(); ctx.moveTo(shoulder.x, shoulder.y); ctx.lineTo(elbow.x, elbow.y); ctx.stroke();
-
-            // Segmento 2: Cotovelo -> Punho
+            const offsetDir = (hand.x < shoulder.x) ? -1 : 1;
+            const bend = 30; 
+            const elbowX = mx + (offsetDir * bend); const elbowY = my;
             ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = width + 4;
+            ctx.beginPath(); ctx.moveTo(shoulder.x, shoulder.y); ctx.lineTo(elbow.x, elbow.y); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(elbow.x, elbow.y); ctx.lineTo(hand.x, hand.y); ctx.stroke();
             ctx.strokeStyle = color; ctx.lineWidth = width;
+            ctx.beginPath(); ctx.moveTo(shoulder.x, shoulder.y); ctx.lineTo(elbow.x, elbow.y); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(elbow.x, elbow.y); ctx.lineTo(hand.x, hand.y); ctx.stroke();
         },
 
@@ -652,14 +606,13 @@
             const bodyG = ctx.createLinearGradient(cx-40, cy, cx+40, cy+200); bodyG.addColorStop(0, char.color); bodyG.addColorStop(1, '#000');
             ctx.fillStyle = bodyG; ctx.beginPath(); ctx.moveTo(cx-50, cy+60); ctx.lineTo(cx+50, cy+60); ctx.lineTo(cx+30, cy+250); ctx.lineTo(cx-30, cy+250); ctx.fill();
             
-            // Renderiza Braços com Cotovelo
             const lHandVis = { x: p.hands.l.x, y: p.hands.l.y + (p.hands.l.z * 1.5) };
             const rHandVis = { x: p.hands.r.x, y: p.hands.r.y + (p.hands.r.z * 1.5) };
             const lElbowVis = p.elbows ? p.elbows.l : {x: cx-80, y: cy+150};
             const rElbowVis = p.elbows ? p.elbows.r : {x: cx+80, y: cy+150};
 
-            this.drawArmIK(ctx, p.shoulders.l, lElbowVis, lHandVis, char.skin, 20);
-            this.drawArmIK(ctx, p.shoulders.r, rElbowVis, rHandVis, char.skin, 20);
+            this.drawArmSegment(ctx, p.shoulders.l, lElbowVis, lHandVis, char.skin, 20);
+            this.drawArmSegment(ctx, p.shoulders.r, rElbowVis, rHandVis, char.skin, 20);
             
             ctx.fillStyle = char.skin; ctx.beginPath(); ctx.arc(cx, cy, 50, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = char.hat; ctx.beginPath(); ctx.arc(cx, cy-20, 52, Math.PI, 0); ctx.fill(); ctx.fillRect(cx-55, cy-20, 110, 15);
@@ -675,15 +628,13 @@
             const lHandVis = { x: p.hands.l.x, y: p.hands.l.y + (100 - p.hands.l.z) };
             const rHandVis = { x: p.hands.r.x, y: p.hands.r.y + (100 - p.hands.r.z) };
             
-            // Usamos os cotovelos reais detectados no processInput
             let lElbowVis = p.elbows.l;
             if (lElbowVis.x === 0) lElbowVis = { x: (p.shoulders.l.x + lHandVis.x)/2 - 50, y: (p.shoulders.l.y + lHandVis.y)/2 };
-            
             let rElbowVis = p.elbows.r;
             if (rElbowVis.x === 0) rElbowVis = { x: (p.shoulders.r.x + rHandVis.x)/2 + 50, y: (p.shoulders.r.y + rHandVis.y)/2 };
 
-            this.drawArmIK(ctx, p.shoulders.l, lElbowVis, lHandVis, char.skin, 45); 
-            this.drawArmIK(ctx, p.shoulders.r, rElbowVis, rHandVis, char.skin, 45); 
+            this.drawArmSegment(ctx, p.shoulders.l, lElbowVis, lHandVis, char.skin, 45); 
+            this.drawArmSegment(ctx, p.shoulders.r, rElbowVis, rHandVis, char.skin, 45); 
             
             ctx.globalAlpha = 0.9;
             this.drawGlove(ctx, p.hands.l, char.color, true);
