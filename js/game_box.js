@@ -1,6 +1,6 @@
 // =============================================================================
-// SUPER BOXING STADIUM: CHAMPIONSHIP EDITION (MASTER V4 - TRUE SKELETON)
-// ARQUITETO: SENIOR DEV - REALTIME ELBOW TRACKING & DYNAMIC GUARD POV
+// SUPER BOXING STADIUM: CHAMPIONSHIP EDITION (MASTER V5 - CALIBRATION PRO)
+// ARQUITETO: SENIOR DEV - 90 DEGREE CALIBRATION & FULL ARM SKELETON
 // =============================================================================
 
 (function() {
@@ -67,14 +67,19 @@
             hp: 0, maxHp: 0, stamina: 100, guard: false, charId: 0,
             head: {x:0, y:0}, 
             shoulders: { l: {x:0,y:0}, r: {x:0,y:0} },
-            // Adicionado Cotovelos (Elbows) para simulação 100% fiel
-            elbows: { l: {x:0,y:0}, r: {x:0,y:0} },
+            elbows: { l: {x:0,y:0}, r: {x:0,y:0} }, // Cotovelos reais
             hands: { 
                 l: {x:0, y:0, z:0, state:'IDLE', vel:0}, 
                 r: {x:0, y:0, z:0, state:'IDLE', vel:0} 
             },
             score: 0,
-            calib: { maxReach: 150, done: false, progress: 0 }
+            calib: { 
+                armLength: 100, // Comprimento total do braço (ombro->punho esticado)
+                forearmLength: 50, // Antebraço (cotovelo->punho)
+                upperArmLength: 50, // Braço (ombro->cotovelo)
+                done: false, 
+                progress: 0 
+            }
         },
         
         // --- OPONENTE ---
@@ -133,7 +138,8 @@
                     else if (checkBtn('btnCalib')) this.startCalibration();
                 }
                 else if (this.state === 'CALIBRATE') {
-                    if (checkBtn('btnFinishCalib')) this.finishCalibration();
+                    // Só permite avançar se calibrar um pouco
+                    if (checkBtn('btnFinishCalib') && this.p1.calib.progress > 20) this.finishCalibration();
                 }
                 else if (this.state === 'GAMEOVER') {
                     if (checkBtn('btnMenu')) this.init();
@@ -157,7 +163,10 @@
         startCalibration: function() {
             this.state = 'CALIBRATE';
             this.p1.calib.progress = 0;
-            this.p1.calib.maxReach = 120; // Valor base seguro
+            // Reset valores padrão seguros
+            this.p1.calib.armLength = 120;
+            this.p1.calib.upperArmLength = 60;
+            this.p1.calib.forearmLength = 60;
             window.Sfx.click();
         },
 
@@ -174,6 +183,7 @@
             this.p1.score = 0;
             this.p1.stamina = 100;
             
+            // Inicializa posições para evitar glitch
             const w = window.System.canvas.width;
             const h = window.System.canvas.height;
             this.p1.head = {x: w/2, y: h/2};
@@ -283,23 +293,19 @@
             return Math.floor(this.p1.score);
         },
 
-        // --- TRACKING & FÍSICA (AGORA COM COTOVELOS) ---
+        // --- TRACKING & FÍSICA ---
         
         processInput: function(w, h, pose) {
             if (!pose || !pose.keypoints) return;
             const k = pose.keypoints;
             const thresh = CONF.MIN_CONFIDENCE;
             
-            // Mapeamento Completo do Esqueleto
             // 0:Nariz, 5:OmbroE, 6:OmbroD, 7:CotoveloE, 8:CotoveloD, 9:PunhoE, 10:PunhoD
             const nose = (k[0] && k[0].score > thresh) ? Utils.toScreen(k[0], w, h) : this.p1.head;
             const lSh  = (k[5] && k[5].score > thresh) ? Utils.toScreen(k[5], w, h) : {x: w*0.3, y: h+50};
             const rSh  = (k[6] && k[6].score > thresh) ? Utils.toScreen(k[6], w, h) : {x: w*0.7, y: h+50};
-            
-            // Novos pontos de cotovelo
             const lEl  = (k[7] && k[7].score > thresh) ? Utils.toScreen(k[7], w, h) : {x: w*0.25, y: h*0.8};
             const rEl  = (k[8] && k[8].score > thresh) ? Utils.toScreen(k[8], w, h) : {x: w*0.75, y: h*0.8};
-            
             const lWr  = (k[9] && k[9].score > thresh) ? Utils.toScreen(k[9], w, h) : this.p1.hands.l;
             const rWr  = (k[10] && k[10].score > thresh) ? Utils.toScreen(k[10], w, h) : this.p1.hands.r;
 
@@ -310,9 +316,7 @@
             this.p1.elbows.l = Utils.lerpPoint(this.p1.elbows.l, lEl, s);
             this.p1.elbows.r = Utils.lerpPoint(this.p1.elbows.r, rEl, s);
 
-            // Ombros para visualização POV
-            // Ajuste dinâmico da base dos braços (shoulders) com base na guarda
-            // Se as mãos estão perto do centro/rosto, a base dos braços se aproxima do centro
+            // Base Dinâmica dos Braços (POV)
             const distL = Math.abs(lWr.x - w/2);
             const distR = Math.abs(rWr.x - w/2);
             const guardFactorL = Math.max(0, 1 - (distL / (w*0.3))); // 1.0 = perto do centro
@@ -330,7 +334,9 @@
 
             const dL = Utils.dist(this.p1.hands.l.x, this.p1.hands.l.y, this.p1.head.x, this.p1.head.y);
             const dR = Utils.dist(this.p1.hands.r.x, this.p1.hands.r.y, this.p1.head.x, this.p1.head.y);
-            this.p1.guard = (dL < CONF.BLOCK_DIST && dR < CONF.BLOCK_DIST);
+            // Guarda baseada no tamanho do braço calibrado
+            const safeDist = this.p1.calib.armLength * 0.7; // Ex: 70% do braço perto do rosto
+            this.p1.guard = (dL < safeDist && dR < safeDist);
             
             if (this.p1.stamina < 100) this.p1.stamina += 0.4;
         },
@@ -354,6 +360,9 @@
             }
 
             if (hand.state === 'PUNCH') {
+                // Extensão baseada na calibração: 
+                // Quanto mais longe do ombro/rosto, maior o Z
+                // Simulação Arcade para Z:
                 hand.z += 25; 
                 if (hand.z > 50 && hand.z < 90) this.checkHit(side, hand, w, h);
                 if (hand.z >= 130) hand.state = 'RETRACT';
@@ -519,50 +528,78 @@
             this.drawBtn(ctx, 'btnCalib', "CALIBRAR", w/2 + 10, h*0.8, btnW, btnH, true);
         },
 
+        // --- TELA DE CALIBRAÇÃO ROBUSTA ---
         uiCalibrate: function(ctx, w, h, pose) {
             ctx.fillStyle = "#111"; ctx.fillRect(0,0,w,h);
             const vmin = Math.min(w, h);
             let tracking = false;
-            let handDist = 0;
 
+            // Desenho do esqueleto guia (i_O_i)
+            ctx.strokeStyle = "rgba(255,255,255,0.2)";
+            ctx.lineWidth = 10;
+            const cx = w/2, cy = h*0.4;
+            // Cabeça
+            ctx.beginPath(); ctx.arc(cx, cy, 30, 0, Math.PI*2); ctx.stroke();
+            // Tronco
+            ctx.beginPath(); ctx.moveTo(cx, cy+30); ctx.lineTo(cx, cy+150); ctx.stroke();
+            // Braços em L (90 graus para cima)
+            // Esq
+            ctx.beginPath(); ctx.moveTo(cx, cy+50); ctx.lineTo(cx-100, cy+50); ctx.lineTo(cx-100, cy-50); ctx.stroke();
+            // Dir
+            ctx.beginPath(); ctx.moveTo(cx, cy+50); ctx.lineTo(cx+100, cy+50); ctx.lineTo(cx+100, cy-50); ctx.stroke();
+
+            // Rastreamento e Medição
             if (pose && pose.keypoints) {
                 const k = pose.keypoints;
                 const thresh = CONF.MIN_CONFIDENCE;
-                const drawP = (i, color) => {
-                    if (k[i] && k[i].score > thresh) {
-                        const p = Utils.toScreen(k[i], w, h);
-                        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(p.x, p.y, 20, 0, Math.PI*2); ctx.fill();
-                        ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
-                        return p;
-                    } return null;
-                };
-                const n = drawP(0, '#fff'); // Nariz
-                const l = drawP(9, '#0ff'); // Mão E
-                const r = drawP(10, '#0ff'); // Mão D
-                if (n && (l || r)) {
+                
+                // Pontos necessários: 5,6(Ombros), 7,8(Cotovelos), 9,10(Punhos)
+                if (k[5]&&k[6]&&k[7]&&k[8]&&k[9]&&k[10] && 
+                    k[5].score>thresh && k[6].score>thresh && k[9].score>thresh && k[10].score>thresh) {
+                    
                     tracking = true;
-                    if (l) handDist = Math.max(handDist, Utils.dist(n.x, n.y, l.x, l.y));
-                    if (r) handDist = Math.max(handDist, Utils.dist(n.x, n.y, r.x, r.y));
-                    if (handDist > this.p1.calib.maxReach) this.p1.calib.maxReach = handDist;
-                    if (handDist > 50) this.p1.calib.progress = Math.min(100, this.p1.calib.progress + 1.5);
+                    
+                    // Converte coordenadas
+                    const lS = Utils.toScreen(k[5], w, h); const rS = Utils.toScreen(k[6], w, h);
+                    const lE = Utils.toScreen(k[7], w, h); const rE = Utils.toScreen(k[8], w, h);
+                    const lW = Utils.toScreen(k[9], w, h); const rW = Utils.toScreen(k[10], w, h);
+
+                    // Desenha o que está sendo visto
+                    const drawLimb = (p1, p2, c) => {
+                        ctx.strokeStyle=c; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke();
+                    };
+                    drawLimb(lS, lE, '#0f0'); drawLimb(lE, lW, '#0f0');
+                    drawLimb(rS, rE, '#0f0'); drawLimb(rE, rW, '#0f0');
+
+                    // Medição (Braço + Antebraço)
+                    const upperL = Utils.dist(lS, lE); const foreL = Utils.dist(lE, lW);
+                    const upperR = Utils.dist(rS, rE); const foreR = Utils.dist(rE, rW);
+                    
+                    const totalL = upperL + foreL;
+                    const totalR = upperR + foreR;
+                    const avgLen = (totalL + totalR) / 2;
+
+                    // Verifica se está na pose (Punhos acima dos cotovelos, cotovelos nivelados com ombros aprox)
+                    const isPoseCorrect = (lW.y < lE.y) && (rW.y < rE.y); // Punhos para cima
+
+                    if (isPoseCorrect) {
+                        this.p1.calib.armLength = (this.p1.calib.armLength * 0.9) + (avgLen * 0.1);
+                        this.p1.calib.progress = Math.min(100, this.p1.calib.progress + 2);
+                    }
                 }
             }
 
             ctx.fillStyle = tracking ? "#0f0" : "#f00"; 
             ctx.font = `bold ${vmin*0.06}px 'Russo One'`; ctx.textAlign="center";
-            ctx.fillText(tracking ? "DETECTADO! MEXA OS BRAÇOS" : "PROCURANDO VOCÊ...", w/2, h*0.15);
+            ctx.fillText(tracking ? "MANTENHA A POSE!" : "FAÇA A POSE i_O_i", w/2, h*0.15);
 
-            const cx = w/2, cy = h*0.5;
-            const radius = vmin * 0.2;
-            ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI*2);
-            ctx.strokeStyle = "#333"; ctx.lineWidth = 20; ctx.stroke();
-            const endAngle = (Math.PI * 2) * (this.p1.calib.progress / 100) - (Math.PI/2);
-            ctx.beginPath(); ctx.arc(cx, cy, radius, -Math.PI/2, endAngle);
-            ctx.strokeStyle = "#0f0"; ctx.lineWidth = 20; ctx.stroke();
+            // Barra
+            ctx.fillStyle = "#333"; ctx.fillRect(w*0.2, h*0.8, w*0.6, 20);
+            ctx.fillStyle = "#0f0"; ctx.fillRect(w*0.2, h*0.8, w*0.6 * (this.p1.calib.progress/100), 20);
 
-            if (this.p1.calib.progress > 20) {
+            if (this.p1.calib.progress > 90) {
                 const btnW = vmin * 0.5; const btnH = vmin * 0.12;
-                this.drawBtn(ctx, 'btnFinishCalib', "LUTAR AGORA!", w/2 - btnW/2, h*0.8, btnW, btnH, true);
+                this.drawBtn(ctx, 'btnFinishCalib', "LUTAR!", w/2 - btnW/2, h*0.65, btnW, btnH, true);
             }
         },
 
@@ -591,9 +628,10 @@
         },
 
         // --- RENDER VISUAL MELHORADO (IK REAL) ---
-        // Desenha Braço: Ombro -> Cotovelo -> Punho
-        drawArmIK: function(ctx, shoulder, elbow, hand, color, width) {
+        drawArmSegment: function(ctx, shoulder, elbow, hand, color, width) {
             ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            const mx = (shoulder.x + hand.x) / 2;
+            const my = (shoulder.y + hand.y) / 2;
             
             // Segmento 1: Ombro -> Cotovelo
             ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = width + 4; // Contorno
@@ -615,10 +653,8 @@
             ctx.fillStyle = bodyG; ctx.beginPath(); ctx.moveTo(cx-50, cy+60); ctx.lineTo(cx+50, cy+60); ctx.lineTo(cx+30, cy+250); ctx.lineTo(cx-30, cy+250); ctx.fill();
             
             // Renderiza Braços com Cotovelo
-            // Mãos visuais do oponente (ajuste de Z para parecer que vem em direção à tela)
             const lHandVis = { x: p.hands.l.x, y: p.hands.l.y + (p.hands.l.z * 1.5) };
             const rHandVis = { x: p.hands.r.x, y: p.hands.r.y + (p.hands.r.z * 1.5) };
-            // Cotovelos (estimados ou reais)
             const lElbowVis = p.elbows ? p.elbows.l : {x: cx-80, y: cy+150};
             const rElbowVis = p.elbows ? p.elbows.r : {x: cx+80, y: cy+150};
 
@@ -640,14 +676,12 @@
             const rHandVis = { x: p.hands.r.x, y: p.hands.r.y + (100 - p.hands.r.z) };
             
             // Usamos os cotovelos reais detectados no processInput
-            // Se não detectado (0,0), estimamos um ponto médio levemente para fora
             let lElbowVis = p.elbows.l;
             if (lElbowVis.x === 0) lElbowVis = { x: (p.shoulders.l.x + lHandVis.x)/2 - 50, y: (p.shoulders.l.y + lHandVis.y)/2 };
             
             let rElbowVis = p.elbows.r;
             if (rElbowVis.x === 0) rElbowVis = { x: (p.shoulders.r.x + rHandVis.x)/2 + 50, y: (p.shoulders.r.y + rHandVis.y)/2 };
 
-            // Desenha braços articulados saindo da base (POV)
             this.drawArmIK(ctx, p.shoulders.l, lElbowVis, lHandVis, char.skin, 45); 
             this.drawArmIK(ctx, p.shoulders.r, rElbowVis, rHandVis, char.skin, 45); 
             
