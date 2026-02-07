@@ -1,12 +1,12 @@
 // =============================================================================
-// SUPER BOXING STADIUM: CHAMPIONSHIP EDITION (MASTER V3)
-// ARQUITETO: SENIOR DEV - ROBUST TRACKING & REALISTIC ARMS
+// SUPER BOXING STADIUM: PLATINUM EDITION (REALITY FIX)
+// ARQUITETO: SENIOR DEV - HYBRID SYSTEM (OLD INPUT + NEW GRAPHICS)
 // =============================================================================
 
 (function() {
 
     // -----------------------------------------------------------------
-    // 1. DADOS E CONFIGURAÇÕES
+    // 1. DADOS E CONFIGURAÇÕES VISUAIS
     // -----------------------------------------------------------------
 
     const CHARACTERS = [
@@ -18,79 +18,100 @@
     ];
 
     const ARENAS = [
-        { id: 0, name: 'WORLD CIRCUIT',  bgTop: '#2c3e50', bgBot: '#34495e', rope: '#e74c3c', floor: '#ecf0f1' },
-        { id: 1, name: 'BOWSER CASTLE',  bgTop: '#2d0e0e', bgBot: '#581414', rope: '#f1c40f', floor: '#2c2c2c' },
-        { id: 2, name: 'PEACH GARDEN',   bgTop: '#00b894', bgBot: '#55efc4', rope: '#e17055', floor: '#81ecec' }
+        { id: 0, name: 'TRAINING GYM',   bgTop: '#34495e', bgBot: '#2c3e50', rope: '#95a5a6', floor: '#bdc3c7' },
+        { id: 1, name: 'WORLD CIRCUIT',  bgTop: '#2980b9', bgBot: '#2c3e50', rope: '#e74c3c', floor: '#ecf0f1' },
+        { id: 2, name: 'CHAMPION RING',  bgTop: '#8e44ad', bgBot: '#2c2c54', rope: '#f1c40f', floor: '#f5f6fa' }
     ];
 
     const CONF = {
         ROUNDS: 3,
         ROUND_TIME: 60,
-        VELOCITY_THRESH: 6,   // Reduzido para facilitar soco
-        BLOCK_DIST: 130,
-        SMOOTHING: 0.7,       // Mais suave para evitar tremedeira
-        MIN_CONFIDENCE: 0.15  // Aceita detecção mesmo com confiança baixa
+        SMOOTHING: 0.5,       // Menor = mais rápido (fiel ao usuário)
+        MIN_CONFIDENCE: 0.2,
+        REACH_SCALE: 2.5
     };
 
     const Utils = {
-        dist: (x1, y1, x2, y2) => Math.hypot(x2 - x1, y2 - y1),
-        toScreen: (kp, w, h) => ({ x: (1 - kp.x / 640) * w, y: (kp.y / 480) * h }),
-        isInside: (x, y, btn) => {
-            const pad = 30; // Hitbox bem generosa
-            return x >= btn.x - pad && x <= btn.x + btn.w + pad && y >= btn.y - pad && y <= btn.y + btn.h + pad;
+        dist: (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y),
+        lerp: (a, b, t) => a + (b - a) * t,
+        lerpPoint: (p1, p2, t) => ({ x: Utils.lerp(p1.x, p2.x, t), y: Utils.lerp(p1.y, p2.y, t) }),
+        
+        // Mapeamento Robusto (Baseado no Kart)
+        toScreen: (kp, w, h) => {
+            const vid = window.System ? window.System.video : null;
+            const vw = (vid && vid.videoWidth > 0) ? vid.videoWidth : 640;
+            const vh = (vid && vid.videoHeight > 0) ? vid.videoHeight : 480;
+            // Inverte X para espelho
+            return { 
+                x: (1 - kp.x / vw) * w, 
+                y: (kp.y / vh) * h 
+            };
         },
-        lerp: (a, b, t) => a + (b - a) * t
+        
+        isInside: (x, y, btn) => {
+            const pad = 30; 
+            return x >= btn.x - pad && x <= btn.x + btn.w + pad && y >= btn.y - pad && y <= btn.y + btn.h + pad;
+        }
     };
 
     // -----------------------------------------------------------------
-    // 2. LÓGICA PRINCIPAL
+    // 2. LÓGICA DO JOGO
     // -----------------------------------------------------------------
 
     const Game = {
-        state: 'MODE_SELECT', 
-        roomId: 'boxing_arena_global',
+        state: 'MODE_SELECT',
+        roomId: 'boxing_platinum_v1',
         isOnline: false,
         dbRef: null,
-        uiButtons: {}, 
+        uiButtons: {},
 
+        // Seleção
         selMode: 'OFFLINE',
         selChar: 0,
         selArena: 0,
-        
+
+        // Estado da Partida
         timer: 0,
         round: 1,
         frame: 0,
         
-        // --- JOGADOR ---
+        // --- JOGADOR (P1) ---
         p1: { 
-            hp: 0, maxHp: 0, stamina: 100, guard: false, charId: 0,
-            head: {x:0, y:0}, 
-            shoulders: { l: {x:0,y:0}, r: {x:0,y:0} },
-            hands: { 
-                l: {x:0, y:0, z:0, state:'IDLE', vel:0}, 
-                r: {x:0, y:0, z:0, state:'IDLE', vel:0} 
-            },
-            score: 0,
-            calib: { maxReach: 150, done: false, progress: 0 }
-        },
-        
-        // --- OPONENTE ---
-        p2: { 
-            hp: 0, maxHp: 0, guard: false, charId: 0, id: null,
+            hp: 100, maxHp: 100, score: 0,
             head: {x:0, y:0},
-            shoulders: { l: {x:0,y:0}, r: {x:0,y:0} },
-            hands: { l: {x:0, y:0, z:0, state:'IDLE'}, r: {x:0, y:0, z:0, state:'IDLE'} },
-            aiTimer: 0, isRemote: false
+            // Dados brutos (Input Real)
+            hands: { 
+                l: {x:0, y:0, z:0, vel:0}, 
+                r: {x:0, y:0, z:0, vel:0} 
+            },
+            elbows: { l:{x:0,y:0}, r:{x:0,y:0} },
+            shoulders: { l:{x:0,y:0}, r:{x:0,y:0} }, 
+            guard: false,
+            calib: { active: false, samples: 0, maxReach: 150, progress: 0 }
+        },
+
+        // --- OPONENTE (P2) ---
+        p2: { 
+            hp: 100, maxHp: 100, id: null, isRemote: false, charId: 0,
+            head: {x:0, y:0},
+            hands: { l: {x:0, y:0, z:0}, r: {x:0, y:0, z:0} },
+            elbows: { l:{x:0,y:0}, r:{x:0,y:0} },
+            shoulders: { l:{x:0,y:0}, r:{x:0,y:0} },
+            guard: false,
+            ai: { timer: 0, state: 'IDLE' }
         },
 
         particles: [],
         msgs: [],
 
-        // --- SISTEMA ---
+        // =================================================================
+        // SISTEMA & INPUT
+        // =================================================================
+
         init: function() {
             this.state = 'MODE_SELECT';
             this.cleanup();
-            if(window.System.msg) window.System.msg("SUPER BOXING");
+            if(window.System.msg) window.System.msg("SUPER BOXING PLATINUM");
             this.setupInput();
         },
 
@@ -101,95 +122,80 @@
 
         setupInput: function() {
             window.System.canvas.onclick = (e) => {
-                const rect = window.System.canvas.getBoundingClientRect();
-                const clickX = e.clientX - rect.left;
-                const clickY = e.clientY - rect.top;
+                const r = window.System.canvas.getBoundingClientRect();
+                const x = e.clientX - r.left;
+                const y = e.clientY - r.top;
                 
-                const checkBtn = (name) => {
-                    const btn = this.uiButtons[name];
-                    return btn && Utils.isInside(clickX, clickY, btn);
-                };
+                const btn = (id) => this.uiButtons[id] && Utils.isInside(x, y, this.uiButtons[id]);
 
                 if (this.state === 'MODE_SELECT') {
-                    if (checkBtn('btnOffline')) this.setMode('OFFLINE');
-                    else if (checkBtn('btnOnline')) this.setMode('ONLINE');
-                } 
-                else if (this.state === 'CHAR_SELECT') {
-                    if (checkBtn('btnNextChar')) {
-                        this.selChar = (this.selChar + 1) % CHARACTERS.length;
-                        window.Sfx.play(600, 'square', 0.1);
-                    }
-                    else if (checkBtn('btnConfirm')) this.confirmChar();
-                }
-                else if (this.state === 'ARENA_SELECT') {
-                    if (checkBtn('btnNextArena')) {
-                        this.selArena = (this.selArena + 1) % ARENAS.length;
-                        window.Sfx.play(600, 'square', 0.1);
-                    }
-                    else if (checkBtn('btnCalib')) this.startCalibration();
-                }
-                else if (this.state === 'CALIBRATE') {
-                    if (checkBtn('btnFinishCalib')) this.finishCalibration();
-                }
-                else if (this.state === 'GAMEOVER') {
-                    if (checkBtn('btnMenu')) this.init();
+                    if (btn('off')) this.setMode('OFFLINE');
+                    if (btn('on')) this.setMode('ONLINE');
+                } else if (this.state === 'CHAR_SELECT') {
+                    if (btn('next')) { this.selChar = (this.selChar+1)%CHARACTERS.length; window.Sfx.play(600,'square',0.1); }
+                    if (btn('ok')) { this.state = 'ARENA_SELECT'; window.Sfx.click(); }
+                } else if (this.state === 'ARENA_SELECT') {
+                    if (btn('next')) { this.selArena = (this.selArena+1)%ARENAS.length; window.Sfx.play(600,'square',0.1); }
+                    if (btn('ok')) this.startCalib();
+                } else if (this.state === 'CALIBRATE') {
+                    if (btn('done') && this.p1.calib.progress > 10) this.finishCalib();
+                } else if (this.state === 'GAMEOVER') {
+                    if (btn('menu')) this.init();
                 }
             };
         },
 
-        setMode: function(mode) {
-            this.selMode = mode;
-            this.isOnline = (mode === 'ONLINE' && !!window.DB);
-            if (mode === 'ONLINE' && !window.DB) { window.System.msg("ERRO: OFFLINE"); return; }
+        setMode: function(m) {
+            if(m === 'ONLINE' && !window.DB) { window.System.msg("OFFLINE ONLY"); return; }
+            this.selMode = m;
+            this.isOnline = (m === 'ONLINE');
             this.state = 'CHAR_SELECT';
             window.Sfx.click();
         },
 
-        confirmChar: function() {
-            this.state = 'ARENA_SELECT';
-            window.Sfx.click();
-        },
-
-        startCalibration: function() {
+        startCalib: function() {
             this.state = 'CALIBRATE';
             this.p1.calib.progress = 0;
-            this.p1.calib.maxReach = 120; // Valor base seguro
-            window.Sfx.click();
+            this.p1.calib.maxReach = 100;
+            this.p1.calib.active = true;
+            window.System.msg("ABRA OS BRAÇOS");
         },
 
-        finishCalibration: function() {
-            this.p1.calib.done = true;
+        finishCalib: function() {
+            this.p1.calib.active = false;
+            this.p1.calib.maxReach = Math.max(80, this.p1.calib.maxReach);
             this.startGame();
             window.Sfx.click();
         },
 
         startGame: function() {
-            this.p1.charId = this.selChar;
-            const stats = CHARACTERS[this.selChar];
-            this.p1.maxHp = stats.hp; this.p1.hp = stats.hp;
+            this.p1.hp = 100;
             this.p1.score = 0;
-            this.p1.stamina = 100;
+            this.round = 1;
+            this.timer = CONF.ROUND_TIME * 60;
+            this.particles = [];
             
-            // Inicializa posições padrão para evitar erro antes da detecção
             const w = window.System.canvas.width;
             const h = window.System.canvas.height;
             this.p1.head = {x: w/2, y: h/2};
-            this.p1.shoulders = {l: {x: w*0.3, y: h*0.8}, r: {x: w*0.7, y: h*0.8}};
-            this.p1.hands = { 
-                l: {x: w*0.3, y: h*0.7, z:0, state:'IDLE', vel:0}, 
-                r: {x: w*0.7, y: h*0.7, z:0, state:'IDLE', vel:0} 
-            };
-            
+            // Inicializa braços para não bugar render antes do tracking
+            this.p1.shoulders = { l:{x:w*0.2, y:h}, r:{x:w*0.8, y:h} };
+            this.p1.hands = { l:{x:w*0.2, y:h*0.7, z:0, vel:0}, r:{x:w*0.8, y:h*0.7, z:0, vel:0} };
+
             if (this.isOnline) {
                 this.connectLobby();
             } else {
                 this.p2.charId = Math.floor(Math.random() * CHARACTERS.length);
-                const aiStats = CHARACTERS[this.p2.charId];
-                this.p2.maxHp = aiStats.hp; this.p2.hp = aiStats.hp;
+                this.p2.hp = 100;
                 this.p2.isRemote = false;
+                // IA Inicial
+                this.p2.head = {x: w/2, y: h/3};
+                this.p2.shoulders = {l: {x:w/2-60, y:h/3+80}, r: {x:w/2+60, y:h/3+80}};
+                this.p2.elbows = {l: {x:w/2-80, y:h/3+140}, r: {x:w/2+80, y:h/3+140}};
+                this.p2.hands = { l: {x:w/2-40, y:h/3+80, z:0}, r: {x:w/2+40, y:h/3+80, z:0} };
+                
                 this.state = 'FIGHT';
-                this.timer = CONF.ROUND_TIME * 60;
-                window.System.msg("ROUND 1");
+                window.System.msg("LUTA!");
             }
         },
 
@@ -197,478 +203,438 @@
             this.state = 'LOBBY';
             this.dbRef = window.DB.ref('rooms/' + this.roomId);
             const myRef = this.dbRef.child('players/' + window.System.playerId);
-            myRef.set({
-                charId: this.selChar, hp: this.p1.hp, ready: true,
-                arena: this.selArena, lastSeen: firebase.database.ServerValue.TIMESTAMP
-            });
+            myRef.set({ charId: this.selChar, hp: 100, lastSeen: firebase.database.ServerValue.TIMESTAMP });
             myRef.onDisconnect().remove();
 
             this.dbRef.child('players').on('value', snap => {
                 const players = snap.val();
                 if (!players) return;
-                const opponentId = Object.keys(players).find(id => id !== window.System.playerId);
-                
-                if (opponentId) {
-                    const opData = players[opponentId];
+                const opId = Object.keys(players).find(id => id !== window.System.playerId);
+
+                if (opId) {
+                    const p2Data = players[opId];
                     if (this.state === 'LOBBY') {
-                        this.p2.charId = opData.charId || 0;
-                        this.p2.hp = opData.hp || 100;
-                        this.p2.maxHp = CHARACTERS[this.p2.charId].hp;
+                        this.p2.id = opId;
+                        this.p2.charId = p2Data.charId || 0;
+                        this.p2.hp = 100;
                         this.p2.isRemote = true;
-                        this.p2.id = opponentId;
                         this.state = 'FIGHT';
-                        this.timer = CONF.ROUND_TIME * 60;
                         window.System.msg("VS " + CHARACTERS[this.p2.charId].name);
-                    } else if (this.state === 'FIGHT') {
-                        this.p2.hp = opData.hp;
-                        if (opData.pose) {
-                            this.p2.head = opData.pose.head;
-                            this.p2.hands = opData.pose.hands;
-                            this.p2.guard = opData.pose.guard;
+                    }
+                    if (this.state === 'FIGHT') {
+                        this.p2.hp = p2Data.hp;
+                        if (p2Data.pose) {
+                            this.p2.head = p2Data.pose.h;
+                            this.p2.shoulders = p2Data.pose.s;
+                            this.p2.elbows = p2Data.pose.e;
+                            this.p2.hands = p2Data.pose.w;
+                            this.p2.guard = p2Data.pose.g;
                         }
                     }
                 } else if (this.state === 'FIGHT') {
-                    window.System.msg("OPONENTE SAIU");
-                    this.state = 'GAMEOVER';
+                    this.state = 'GAMEOVER'; window.System.msg("OPONENTE SAIU");
                 }
             });
         },
 
-        // -----------------------------------------------------------------
-        // LOOP PRINCIPAL
-        // -----------------------------------------------------------------
+        // =================================================================
+        // UPDATE LOOP
+        // =================================================================
+
         update: function(ctx, w, h, pose) {
             this.frame++;
-            this.uiButtons = {}; 
+            this.uiButtons = {};
 
-            // Fundo Padrão
+            // 1. INPUT (CRUCIAL: Sempre roda para atualizar posições)
+            this.processSkeleton(w, h, pose);
+
+            // 2. BACKGROUND
             if (this.state !== 'FIGHT') {
                 const g = ctx.createLinearGradient(0,0,0,h);
                 g.addColorStop(0, '#1a1a2e'); g.addColorStop(1, '#16213e');
                 ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
             }
 
-            if (this.state === 'MODE_SELECT') { this.uiModeSelect(ctx, w, h); return; }
-            if (this.state === 'CHAR_SELECT') { this.uiCharSelect(ctx, w, h); return; }
-            if (this.state === 'ARENA_SELECT') { this.uiArenaSelect(ctx, w, h); return; }
-            if (this.state === 'CALIBRATE') { this.uiCalibrate(ctx, w, h, pose); return; } 
+            // 3. MÁQUINA DE ESTADOS
+            if (this.state === 'MODE_SELECT') { this.uiMode(ctx, w, h); return; }
+            if (this.state === 'CHAR_SELECT') { this.uiChar(ctx, w, h); return; }
+            if (this.state === 'ARENA_SELECT') { this.uiArena(ctx, w, h); return; }
+            if (this.state === 'CALIBRATE') { this.uiCalib(ctx, w, h, pose); return; }
             if (this.state === 'LOBBY') { this.uiLobby(ctx, w, h); return; }
-            if (this.state === 'GAMEOVER') { this.uiGameOver(ctx, w, h); return; }
+            if (this.state === 'GAMEOVER') { this.uiOver(ctx, w, h); return; }
 
-            // === FIGHT GAMEPLAY ===
-            this.processInput(w, h, pose);
-            
-            if (this.isOnline) this.syncOnline();
+            // === LUTA ===
+            this.drawArena(ctx, w, h);
+
+            if (this.isOnline) this.syncNetwork();
             else this.updateAI(w, h);
 
-            this.drawArena(ctx, w, h);
-            this.drawRival(ctx, this.p2, w, h); 
-            this.drawPlayer(ctx, this.p1, w, h); 
-            
+            // Desenha personagens
+            this.drawCharacter(ctx, this.p2, false, w, h); // Rival (Fundo)
+            this.drawCharacter(ctx, this.p1, true, w, h);  // Jogador (Frente)
+
+            // Lógica
+            if (this.timer > 0) this.timer--; else this.endGame();
+            if (this.p1.hp <= 0 || this.p2.hp <= 0) this.endGame();
+
             this.drawHUD(ctx, w, h);
             this.updateParticles(ctx);
             this.drawMsgs(ctx);
 
-            if (this.timer > 0) this.timer--; else this.endRound();
-
-            if (this.p1.hp <= 0 || this.p2.hp <= 0) {
-                this.state = 'GAMEOVER';
-                if(this.isOnline && this.dbRef) this.dbRef.child('players/' + window.System.playerId).remove();
-            }
-
             return Math.floor(this.p1.score);
         },
 
-        // --- TRACKING & FÍSICA ---
-        
-        processInput: function(w, h, pose) {
+        // =================================================================
+        // FÍSICA E ESQUELETO (RAW INPUT 1:1)
+        // =================================================================
+
+        processSkeleton: function(w, h, pose) {
             if (!pose || !pose.keypoints) return;
             const k = pose.keypoints;
-            
-            // Usando Threshold baixo para garantir detecção
+            const smooth = CONF.SMOOTHING;
             const thresh = CONF.MIN_CONFIDENCE;
-            
-            // 0:Nariz, 5:OmbroE, 6:OmbroD, 9:PulsoE, 10:PulsoD
-            const nose = (k[0] && k[0].score > thresh) ? Utils.toScreen(k[0], w, h) : this.p1.head;
-            const lSh  = (k[5] && k[5].score > thresh) ? Utils.toScreen(k[5], w, h) : {x: w*0.3, y: h+50};
-            const rSh  = (k[6] && k[6].score > thresh) ? Utils.toScreen(k[6], w, h) : {x: w*0.7, y: h+50};
-            const lWr  = (k[9] && k[9].score > thresh) ? Utils.toScreen(k[9], w, h) : this.p1.hands.l;
-            const rWr  = (k[10] && k[10].score > thresh) ? Utils.toScreen(k[10], w, h) : this.p1.hands.r;
 
-            // Aplica Movimento com Suavização
-            this.p1.head.x = Utils.lerp(this.p1.head.x, nose.x, CONF.SMOOTHING);
-            this.p1.head.y = Utils.lerp(this.p1.head.y, nose.y, CONF.SMOOTHING);
-            
-            this.p1.shoulders.l = { x: lSh.x, y: h + 100 }; // Ombros visuais (POV) fixos na base/seguindo levemente
-            this.p1.shoulders.r = { x: rSh.x, y: h + 100 };
+            const getP = (i, fallback) => (k[i] && k[i].score > thresh) ? Utils.toScreen(k[i], w, h) : fallback;
 
-            this.updateHandLogic(this.p1.hands.l, lWr, 'left', w, h);
-            this.updateHandLogic(this.p1.hands.r, rWr, 'right', w, h);
+            // Dados Crus
+            const nose = getP(0, this.p1.head);
+            const ls = getP(5, {x:w*0.3, y:h*0.8});
+            const rs = getP(6, {x:w*0.7, y:h*0.8});
+            const le = getP(7, null); 
+            const re = getP(8, null);
+            const lw = getP(9, this.p1.hands.l);
+            const rw = getP(10, this.p1.hands.r);
+
+            // CALIBRAÇÃO
+            if (this.p1.calib.active) {
+                this.p1.head = nose; 
+                // Feedback visual na tela de calibração
+                if (k[9] && k[10]) {
+                    const span = Utils.dist(lw, rw);
+                    if (span > this.p1.calib.maxReach) this.p1.calib.maxReach = span / 2;
+                    if (span > 100) this.p1.calib.progress = Math.min(100, this.p1.calib.progress + 2);
+                }
+                return;
+            }
+
+            // SUAVIZAÇÃO E POSICIONAMENTO 1:1
+            this.p1.head = Utils.lerpPoint(this.p1.head, nose, smooth);
+            
+            // Ombros Virtuais (POV) - Base fixa embaixo, move X com cabeça
+            this.p1.shoulders.l = { x: Utils.lerp(w*0.1, w*0.4, (nose.x/w)), y: h + 50 };
+            this.p1.shoulders.r = { x: Utils.lerp(w*0.9, w*0.6, (nose.x/w)), y: h + 50 };
+
+            // Processa Mãos
+            this.processHand('l', lw, le, this.p1.shoulders.l, w, h);
+            this.processHand('r', rw, re, this.p1.shoulders.r, w, h);
 
             // Guarda
-            const dL = Utils.dist(this.p1.hands.l.x, this.p1.hands.l.y, this.p1.head.x, this.p1.head.y);
-            const dR = Utils.dist(this.p1.hands.r.x, this.p1.hands.r.y, this.p1.head.x, this.p1.head.y);
-            this.p1.guard = (dL < CONF.BLOCK_DIST && dR < CONF.BLOCK_DIST);
-            
-            if (this.p1.stamina < 100) this.p1.stamina += 0.4;
+            const dL = Utils.dist(this.p1.hands.l, nose);
+            const dR = Utils.dist(this.p1.hands.r, nose);
+            const guardDist = this.p1.calib.maxReach * 0.7; 
+            this.p1.guard = (dL < guardDist && dR < guardDist);
         },
 
-        updateHandLogic: function(hand, target, side, w, h) {
-            const dx = target.x - hand.x;
-            const dy = target.y - hand.y;
-            const velocity = Math.hypot(dx, dy);
-            
-            hand.x = Utils.lerp(hand.x, target.x, CONF.SMOOTHING);
-            hand.y = Utils.lerp(hand.y, target.y, CONF.SMOOTHING);
-            hand.vel = velocity;
+        processHand: function(side, rawPos, rawElbow, shoulderPos, w, h) {
+            const hand = this.p1.hands[side];
+            const elbow = this.p1.elbows[side];
 
-            // Detecta Soco
-            if (hand.state === 'IDLE') {
-                if (velocity > CONF.VELOCITY_THRESH && this.p1.stamina > 10) {
-                    hand.state = 'PUNCH';
-                    hand.z = 0;
-                    this.p1.stamina -= 15;
-                    window.Sfx.play(200, 'noise', 0.1);
-                }
+            // 1. Posição XY (Fiel 1:1)
+            const speed = Utils.dist(hand, rawPos);
+            hand.x = Utils.lerp(hand.x, rawPos.x, CONF.SMOOTHING);
+            hand.y = Utils.lerp(hand.y, rawPos.y, CONF.SMOOTHING);
+            hand.vel = speed;
+
+            // 2. Cotovelo (Se não detectado, interpola para visual natural)
+            if (rawElbow) {
+                elbow.x = Utils.lerp(elbow.x, rawElbow.x, CONF.SMOOTHING);
+                elbow.y = Utils.lerp(elbow.y, rawElbow.y, CONF.SMOOTHING);
+            } else {
+                // Cotovelo estimado (ponto médio puxado para fora)
+                const midX = (shoulderPos.x + hand.x) / 2;
+                const midY = (shoulderPos.y + hand.y) / 2;
+                const sideDir = (side === 'l') ? -1 : 1;
+                elbow.x = Utils.lerp(elbow.x, midX + (sideDir * 40), 0.1);
+                elbow.y = Utils.lerp(elbow.y, midY, 0.1);
             }
 
-            if (hand.state === 'PUNCH') {
-                hand.z += 25; 
-                if (hand.z > 50 && hand.z < 90) this.checkHit(side, hand, w, h);
-                if (hand.z >= 130) hand.state = 'RETRACT';
-            } 
-            else if (hand.state === 'RETRACT') {
-                hand.z -= 20;
-                if (hand.z <= 0) { hand.z = 0; hand.state = 'IDLE'; }
+            // 3. Z-Depth (Simulado pela extensão do braço)
+            const distFromShoulder = Utils.dist(rawPos, shoulderPos);
+            // Normaliza extensão (0 a 1.0)
+            const extRatio = Math.min(1.5, distFromShoulder / this.p1.calib.maxReach);
+            // Mapeia para Z visual
+            const targetZ = Math.max(0, (extRatio - 0.4) * 200);
+            hand.z = Utils.lerp(hand.z, targetZ, 0.3);
+
+            // 4. Detecção de Impacto
+            // Se velocidade alta E mão esticada
+            if (speed > 5 && hand.z > 60) {
+                this.checkHit(hand, speed);
             }
         },
 
-        checkHit: function(side, hand, w, h) {
-            const rX = w/2 + (this.p2.head.x - w/2) * 0.5;
-            const rY = h/3 + (this.p2.head.y - h/3) * 0.5;
+        checkHit: function(handPos, speed) {
+            // Hitbox Rival
+            const rX = this.p2.head.x;
+            const rY = this.p2.head.y;
             
-            if (Utils.dist(hand.x, hand.y, rX, rY) < 150) {
+            if (Utils.dist(handPos, {x:rX, y:rY}) < 120) {
                 if (this.p2.guard) {
-                    this.spawnMsg(rX, rY, "BLOQUEIO", "#aaa");
+                    this.spawnMsg(rX, rY, "BLOCKED", "#aaa");
                     window.Sfx.play(150, 'square', 0.1);
                 } else {
-                    const power = CHARACTERS[this.p1.charId].power;
-                    const dmg = Math.floor(5 * power + (hand.vel * 0.1)); 
+                    const dmg = Math.floor(5 + speed * 0.3);
                     this.p2.hp -= dmg;
                     this.p1.score += dmg * 10;
-                    this.spawnParticle(rX, rY, '#ff0');
-                    this.spawnMsg(rX, rY, dmg, "#f00");
-                    window.Gfx.shakeScreen(15);
+                    this.spawnParticles(rX, rY, '#f00');
+                    this.spawnMsg(rX, rY, dmg, "#ff0");
                     window.Sfx.hit();
-                    if (this.isOnline) this.dbRef.child('players/' + this.p2.id).update({ hp: this.p2.hp });
+                    window.Gfx.shakeScreen(10);
+                    if (this.isOnline) this.dbRef.child('players/'+this.p2.id).update({hp: this.p2.hp});
                 }
-                hand.state = 'RETRACT';
             }
         },
 
+        // --- IA SIMPLES ---
         updateAI: function(w, h) {
-            const stats = CHARACTERS[this.p2.charId];
-            const targetX = (w/2) + Math.sin(this.frame * 0.04 * stats.speed) * 120;
-            this.p2.head.x = Utils.lerp(this.p2.head.x, targetX, 0.05);
-            this.p2.head.y = h/3 + Math.cos(this.frame * 0.03) * 20;
-            this.p2.shoulders.l = { x: this.p2.head.x - 60, y: this.p2.head.y + 100 };
-            this.p2.shoulders.r = { x: this.p2.head.x + 60, y: this.p2.head.y + 100 };
+            const cpu = this.p2;
+            const t = this.frame * 0.05;
+            
+            cpu.head.x = Utils.lerp(cpu.head.x, w/2 + Math.sin(t)*120, 0.05);
+            cpu.head.y = h/3 + Math.cos(t*0.5)*20;
+            
+            const baseY = cpu.head.y + 80;
+            cpu.shoulders.l = {x: cpu.head.x-60, y: baseY};
+            cpu.shoulders.r = {x: cpu.head.x+60, y: baseY};
 
-            if (this.p2.aiTimer > 0) this.p2.aiTimer--;
-            else {
-                const rand = Math.random();
-                if (rand < 0.03 * stats.speed) { 
-                    const hnd = Math.random()>0.5 ? this.p2.hands.l : this.p2.hands.r;
-                    hnd.state = 'PUNCH'; hnd.z = 0;
-                    this.p2.aiTimer = 60 / stats.speed;
-                } else if (rand < 0.05) { 
-                    this.p2.guard = !this.p2.guard;
-                    this.p2.aiTimer = 60;
+            // Ataque
+            if (cpu.ai.timer-- <= 0) {
+                const r = Math.random();
+                if (r < 0.03) { 
+                    const side = Math.random()>0.5 ? 'l' : 'r';
+                    cpu.hands[side].z = 150; // Soco
+                    cpu.hands[side].x = w/2; cpu.hands[side].y = h/2+100;
+                    cpu.ai.timer = 50;
+                    if (!this.p1.guard) {
+                        this.p1.hp -= 5;
+                        window.Gfx.shakeScreen(5);
+                        this.spawnMsg(w/2, h/2, "OUCH", "#f00");
+                    } else window.Sfx.play(100, 'sine', 0.1);
+
+                } else if (r < 0.05) { 
+                    cpu.guard = !cpu.guard;
+                    cpu.ai.timer = 60;
+                } else { 
+                    cpu.hands.l.z = 0; cpu.hands.r.z = 0;
                 }
             }
 
-            ['l', 'r'].forEach(s => {
-                const hnd = this.p2.hands[s];
-                const guardX = this.p2.head.x + (s==='l'?-50:50);
-                const guardY = this.p2.head.y + 80;
-                
-                if (hnd.state === 'IDLE') {
-                    hnd.x = Utils.lerp(hnd.x, guardX, 0.1);
-                    hnd.y = Utils.lerp(hnd.y, guardY, 0.1);
-                } else if (hnd.state === 'PUNCH') {
-                    hnd.z += 10 * stats.speed;
-                    hnd.x = Utils.lerp(hnd.x, w/2, 0.15); hnd.y = Utils.lerp(hnd.y, h/2, 0.15);
-                    if (hnd.z > 70 && hnd.z < 100) {
-                        if (!this.p1.guard) {
-                            this.p1.hp -= 4 * stats.power;
-                            window.Gfx.shakeScreen(5);
-                            this.spawnMsg(w/2, h/2, "OUCH", "#f00");
-                            hnd.state = 'RETRACT';
-                        } else {
-                            hnd.state = 'RETRACT';
-                            window.Sfx.play(100, 'sine', 0.1);
-                        }
-                    }
-                    if (hnd.z > 120) hnd.state = 'RETRACT';
+            // Animação Mãos Idle
+            ['l', 'r'].forEach((s, i) => {
+                const hand = cpu.hands[s];
+                if (hand.z < 10) {
+                    hand.x = Utils.lerp(hand.x, cpu.head.x + (i===0?-50:50), 0.1);
+                    hand.y = Utils.lerp(hand.y, baseY + (cpu.guard?-40:40), 0.1);
                 } else {
-                    hnd.z -= 15; if(hnd.z<=0) { hnd.z=0; hnd.state='IDLE'; }
+                    hand.z -= 5; 
+                }
+                // IK Cotovelo IA (Simples)
+                cpu.elbows[s] = {
+                    x: (cpu.shoulders[s].x + hand.x)/2 + (i===0?-40:40),
+                    y: (cpu.shoulders[s].y + hand.y)/2 + 20
+                };
+            });
+        },
+
+        syncNetwork: function() {
+            if (this.frame % 3 !== 0) return;
+            this.dbRef.child('players/' + window.System.playerId).update({
+                hp: this.p1.hp,
+                pose: {
+                    h: {x:Math.round(this.p1.head.x), y:Math.round(this.p1.head.y)},
+                    s: this.p1.shoulders,
+                    e: this.p1.elbows,
+                    w: this.p1.hands,
+                    g: this.p1.guard
                 }
             });
         },
 
-        syncOnline: function() {
-            if (this.frame % 3 === 0) {
-                this.dbRef.child('players/' + window.System.playerId).update({
-                    hp: this.p1.hp,
-                    pose: {
-                        head: { x: Math.floor(this.p1.head.x), y: Math.floor(this.p1.head.y) },
-                        hands: { 
-                            l: { x: Math.floor(this.p1.hands.l.x), y: Math.floor(this.p1.hands.l.y), z: Math.floor(this.p1.hands.l.z), state: this.p1.hands.l.state },
-                            r: { x: Math.floor(this.p1.hands.r.x), y: Math.floor(this.p1.hands.r.y), z: Math.floor(this.p1.hands.r.z), state: this.p1.hands.r.state }
-                        },
-                        guard: this.p1.guard
-                    }
-                });
-            }
-        },
+        endGame: function() { this.state = 'GAMEOVER'; },
 
-        // -----------------------------------------------------------------
-        // UI & TELAS
-        // -----------------------------------------------------------------
-        
-        drawBtn: function(ctx, key, txt, x, y, w, h, active=false) {
-            this.uiButtons[key] = {x, y, w, h};
-            ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 10;
-            ctx.fillStyle = active ? "#e67e22" : "#34495e";
-            ctx.beginPath(); 
-            if(ctx.roundRect) ctx.roundRect(x, y, w, h, 20); else ctx.rect(x, y, w, h);
-            ctx.fill();
-            ctx.lineWidth = active ? 4 : 2; ctx.strokeStyle = "#fff"; ctx.stroke();
-            ctx.shadowBlur = 0; ctx.fillStyle = "#fff";
-            const fontSize = Math.floor(h * 0.5);
-            ctx.font = `bold ${fontSize}px 'Russo One'`;
-            ctx.textAlign = "center"; ctx.textBaseline = "middle";
-            ctx.fillText(txt, x + w/2, y + h/2 + 3);
-        },
+        // =================================================================
+        // RENDERIZAÇÃO
+        // =================================================================
 
-        uiModeSelect: function(ctx, w, h) {
-            const vmin = Math.min(w, h);
-            ctx.fillStyle = "#fff"; ctx.font = `bold ${vmin * 0.1}px 'Russo One'`; 
-            ctx.textAlign = "center"; ctx.fillText("SUPER BOXING", w/2, h * 0.2);
-            const btnW = vmin * 0.7; const btnH = vmin * 0.15;
-            this.drawBtn(ctx, 'btnOffline', "OFFLINE (CPU)", w/2 - btnW/2, h * 0.45, btnW, btnH, this.selMode==='OFFLINE');
-            this.drawBtn(ctx, 'btnOnline', "ONLINE (PVP)", w/2 - btnW/2, h * 0.65, btnW, btnH, this.selMode==='ONLINE');
-        },
-
-        uiCharSelect: function(ctx, w, h) {
-            const vmin = Math.min(w, h);
-            const c = CHARACTERS[this.selChar];
-            ctx.fillStyle = c.color; ctx.fillRect(0,0,w,h);
-            ctx.fillStyle = "#fff"; ctx.font = `bold ${vmin*0.08}px 'Russo One'`; ctx.textAlign="center";
-            ctx.fillText("ESCOLHA SEU LUTADOR", w/2, h*0.12);
-            const avatarSize = vmin * 0.25;
-            ctx.beginPath(); ctx.arc(w/2, h*0.4, avatarSize, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = c.hat; ctx.beginPath(); ctx.arc(w/2, h*0.4 - 20, avatarSize, Math.PI, 0); ctx.fill();
-            ctx.fillStyle = "#fff"; ctx.font = `bold ${vmin*0.12}px 'Russo One'`;
-            ctx.fillText(c.name, w/2, h*0.65);
-            const btnW = vmin * 0.35; const btnH = vmin * 0.12;
-            this.drawBtn(ctx, 'btnNextChar', "TROCAR", w/2 - btnW - 10, h*0.8, btnW, btnH);
-            this.drawBtn(ctx, 'btnConfirm', "CONFIRMAR", w/2 + 10, h*0.8, btnW, btnH, true);
-        },
-
-        uiArenaSelect: function(ctx, w, h) {
-            const vmin = Math.min(w, h);
+        drawArena: function(ctx, w, h) {
             const a = ARENAS[this.selArena];
-            const g = ctx.createLinearGradient(0,0,0,h);
+            const mid = h * 0.45;
+            const g = ctx.createLinearGradient(0,0,0,mid);
             g.addColorStop(0, a.bgTop); g.addColorStop(1, a.bgBot);
-            ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
-            ctx.fillStyle = "#fff"; ctx.font = `bold ${vmin*0.08}px 'Russo One'`; ctx.textAlign="center";
-            ctx.fillText("ARENA", w/2, h*0.15);
-            ctx.font = `bold ${vmin*0.1}px 'Russo One'`; ctx.fillText(a.name, w/2, h*0.5);
-            const btnW = vmin * 0.35; const btnH = vmin * 0.12;
-            this.drawBtn(ctx, 'btnNextArena', "TROCAR", w/2 - btnW - 10, h*0.8, btnW, btnH);
-            this.drawBtn(ctx, 'btnCalib', "CALIBRAR", w/2 + 10, h*0.8, btnW, btnH, true);
+            ctx.fillStyle = g; ctx.fillRect(0,0,w,mid);
+            ctx.fillStyle = a.floor; ctx.beginPath(); ctx.moveTo(0,h); ctx.lineTo(w,h); ctx.lineTo(w*0.8, mid); ctx.lineTo(w*0.2, mid); ctx.fill();
+            ctx.strokeStyle = a.rope; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(w*0.2, mid); ctx.lineTo(w*0.8, mid); ctx.moveTo(w*0.15, mid+40); ctx.lineTo(w*0.85, mid+40); ctx.stroke();
         },
 
-        // --- TELA DE CALIBRAÇÃO ROBUSTA ---
-        uiCalibrate: function(ctx, w, h, pose) {
-            ctx.fillStyle = "#111"; ctx.fillRect(0,0,w,h);
-            const vmin = Math.min(w, h);
-
-            // Feedback de Rastreamento (IMPORTANTÍSSIMO)
-            let tracking = false;
-            let handDist = 0;
-
-            if (pose && pose.keypoints) {
-                const k = pose.keypoints;
-                const thresh = CONF.MIN_CONFIDENCE;
+        drawCharacter: function(ctx, p, isSelf, w, h) {
+            const char = CHARACTERS[p.charId];
+            
+            if (!isSelf) {
+                const cx = p.head.x; const cy = p.head.y;
+                const bg = ctx.createLinearGradient(cx-40,cy,cx+40,cy+200); 
+                bg.addColorStop(0, char.color); bg.addColorStop(1, '#000');
+                ctx.fillStyle=bg; ctx.beginPath(); ctx.moveTo(cx-50,cy+60); ctx.lineTo(cx+50,cy+60); ctx.lineTo(cx+30,cy+250); ctx.lineTo(cx-30,cy+250); ctx.fill();
                 
-                const drawP = (i, color) => {
-                    if (k[i] && k[i].score > thresh) {
+                ctx.fillStyle=char.skin; ctx.beginPath(); ctx.arc(cx,cy,45,0,7); ctx.fill();
+                ctx.fillStyle=char.hat; ctx.beginPath(); ctx.arc(cx,cy-15,47,Math.PI,0); ctx.fill(); ctx.fillRect(cx-50,cy-15,100,15);
+                ctx.fillStyle='#000'; ctx.font="20px Arial"; ctx.textAlign='center'; ctx.fillText(char.name[0], cx, cy-28);
+                
+                this.drawArmSegment(ctx, p.shoulders.l, p.elbows.l, p.hands.l, char.skin, 18);
+                this.drawArmSegment(ctx, p.shoulders.r, p.elbows.r, p.hands.r, char.skin, 18);
+            } else {
+                // PLAYER
+                this.drawArmSegment(ctx, p.shoulders.l, p.elbows.l, p.hands.l, char.skin, 40);
+                this.drawArmSegment(ctx, p.shoulders.r, p.elbows.r, p.hands.r, char.skin, 40);
+            }
+
+            // Luvas
+            this.drawGlove(ctx, p.hands.l, char.color, isSelf ? (1+p.hands.l.z/300) : (0.8+p.hands.l.z/300));
+            this.drawGlove(ctx, p.hands.r, char.color, isSelf ? (1+p.hands.r.z/300) : (0.8+p.hands.r.z/300));
+
+            if(p.guard && isSelf) { ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.fillRect(0,0,w,h); }
+        },
+
+        drawArmSegment: function(ctx, s, e, w, color, width) {
+            ctx.lineCap='round'; ctx.lineJoin='round';
+            // Contorno
+            ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=width+4;
+            ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(e.x, e.y); ctx.lineTo(w.x, w.y); ctx.stroke();
+            // Pele
+            ctx.strokeStyle=color; ctx.lineWidth=width;
+            ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(e.x, e.y); ctx.lineTo(w.x, w.y); ctx.stroke();
+        },
+
+        drawGlove: function(ctx, pos, color, s) {
+            ctx.save(); ctx.translate(pos.x, pos.y); ctx.scale(s, s);
+            const g = ctx.createRadialGradient(-10,-10,5,0,0,35); g.addColorStop(0,'#fff'); g.addColorStop(1,color);
+            ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,35,0,7); ctx.fill();
+            ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=3; ctx.stroke();
+            ctx.restore();
+        },
+
+        uiCalib: function(ctx,w,h,pose) {
+            ctx.fillStyle='#111'; ctx.fillRect(0,0,w,h);
+            const v=Math.min(w,h);
+            ctx.fillStyle='#0ff'; ctx.textAlign='center'; ctx.font=`bold ${v*0.06}px 'Russo One'`;
+            ctx.fillText("CALIBRAÇÃO", w/2, h*0.15);
+            ctx.fillStyle='#fff'; ctx.font=`${v*0.04}px sans-serif`;
+            ctx.fillText("FAÇA A POSE DE 'T'", w/2, h*0.25);
+            
+            if(pose && pose.keypoints) {
+                const k = pose.keypoints;
+                const drawP = (i,c) => {
+                    if(k[i] && k[i].score > CONF.MIN_CONFIDENCE) {
                         const p = Utils.toScreen(k[i], w, h);
-                        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(p.x, p.y, 20, 0, Math.PI*2); ctx.fill();
-                        ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
-                        return p;
+                        ctx.fillStyle=c; ctx.beginPath(); ctx.arc(p.x,p.y,15,0,7); ctx.fill();
                     }
-                    return null;
                 };
-
-                const n = drawP(0, '#fff'); // Nariz
-                const l = drawP(9, '#0ff'); // Mão E
-                const r = drawP(10, '#0ff'); // Mão D
-
-                if (n && (l || r)) {
-                    tracking = true;
-                    // Lógica de progresso baseada em movimento
-                    if (l) handDist = Math.max(handDist, Utils.dist(n.x, n.y, l.x, l.y));
-                    if (r) handDist = Math.max(handDist, Utils.dist(n.x, n.y, r.x, r.y));
-                    
-                    if (handDist > this.p1.calib.maxReach) this.p1.calib.maxReach = handDist;
-                    
-                    // Preenche a barra se detectar movimento dos braços
-                    if (handDist > 50) this.p1.calib.progress = Math.min(100, this.p1.calib.progress + 1.5);
+                drawP(5,'#0f0'); drawP(6,'#0f0'); drawP(9,'#0ff'); drawP(10,'#0ff');
+                
+                const l=k[9], r=k[10];
+                if(l && r && l.score > 0.2 && r.score > 0.2) {
+                     const span = Math.abs(l.x - r.x);
+                     if (span > 50) this.p1.calib.progress = Math.min(100, this.p1.calib.progress+2);
                 }
             }
 
-            // Título e Status
-            ctx.fillStyle = tracking ? "#0f0" : "#f00"; 
-            ctx.font = `bold ${vmin*0.06}px 'Russo One'`; ctx.textAlign="center";
-            ctx.fillText(tracking ? "DETECTADO! MEXA OS BRAÇOS" : "PROCURANDO VOCÊ...", w/2, h*0.15);
+            const pct = this.p1.calib.progress / 100; 
+            ctx.fillStyle='#333'; ctx.fillRect(w*0.2, h*0.7, w*0.6, 30);
+            ctx.fillStyle='#0f0'; ctx.fillRect(w*0.2, h*0.7, w*0.6*pct, 30);
 
-            // Barra Circular
-            const cx = w/2, cy = h*0.5;
-            const radius = vmin * 0.2;
-            
-            ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI*2);
-            ctx.strokeStyle = "#333"; ctx.lineWidth = 20; ctx.stroke();
-
-            const endAngle = (Math.PI * 2) * (this.p1.calib.progress / 100) - (Math.PI/2);
-            ctx.beginPath(); ctx.arc(cx, cy, radius, -Math.PI/2, endAngle);
-            ctx.strokeStyle = "#0f0"; ctx.lineWidth = 20; ctx.stroke();
-
-            // Botão Confirmar (Aparece se > 20%)
-            if (this.p1.calib.progress > 20) {
-                const btnW = vmin * 0.5;
-                const btnH = vmin * 0.12;
-                this.drawBtn(ctx, 'btnFinishCalib', "LUTAR AGORA!", w/2 - btnW/2, h*0.8, btnW, btnH, true);
+            if(this.p1.calib.progress > 20) {
+                this.drawBtn(ctx, 'done', "JOGAR AGORA!", w/2-v*0.3, h*0.7, v*0.6, v*0.15, true);
             }
         },
 
-        uiLobby: function(ctx, w, h) {
-            const vmin = Math.min(w, h);
-            ctx.fillStyle = "#000"; ctx.fillRect(0,0,w,h);
-            ctx.fillStyle = "#fff"; ctx.textAlign="center"; ctx.font = `bold ${vmin*0.08}px 'Russo One'`;
-            ctx.fillText("AGUARDANDO...", w/2, h/2);
-            const rot = (Date.now() / 500) * Math.PI;
-            ctx.save(); ctx.translate(w/2, h/2 + vmin*0.2); ctx.rotate(rot);
-            ctx.strokeStyle = "#fff"; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(0,0,vmin*0.1,0, 5); ctx.stroke();
-            ctx.restore();
+        drawBtn: function(ctx, id, txt, x, y, w, h, active) {
+            this.uiButtons[id] = {x,y,w,h};
+            ctx.shadowBlur=10; ctx.shadowColor='rgba(0,0,0,0.5)';
+            ctx.fillStyle = active ? '#e67e22' : '#34495e';
+            ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,h,20); else ctx.rect(x,y,w,h); ctx.fill();
+            ctx.strokeStyle='#fff'; ctx.lineWidth=3; ctx.stroke();
+            ctx.shadowBlur=0; ctx.fillStyle='#fff'; 
+            ctx.font=`bold ${h*0.5}px 'Russo One'`; ctx.textAlign='center'; ctx.textBaseline='middle';
+            ctx.fillText(txt, x+w/2, y+h/2);
         },
 
-        uiGameOver: function(ctx, w, h) {
-            const vmin = Math.min(w, h);
-            ctx.fillStyle = "rgba(0,0,0,0.85)"; ctx.fillRect(0,0,w,h);
+        uiMode: function(ctx,w,h) {
+            const v = Math.min(w,h);
+            ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.font=`bold ${v*0.1}px 'Russo One'`;
+            ctx.fillText("SUPER BOXING", w/2, h*0.2);
+            this.drawBtn(ctx, 'off', "OFFLINE", w/2-v*0.35, h*0.4, v*0.7, v*0.15);
+            this.drawBtn(ctx, 'on', "ONLINE", w/2-v*0.35, h*0.6, v*0.7, v*0.15);
+        },
+
+        uiChar: function(ctx,w,h) {
+            const v=Math.min(w,h); const c=CHARACTERS[this.selChar];
+            ctx.fillStyle=c.color; ctx.fillRect(0,0,w,h);
+            ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.font=`bold ${v*0.08}px 'Russo One'`;
+            ctx.fillText("ESCOLHA", w/2, h*0.15);
+            ctx.beginPath(); ctx.arc(w/2, h*0.4, v*0.25, 0, 7); ctx.fillStyle=c.hat; ctx.fill();
+            ctx.fillStyle='#fff'; ctx.fillText(c.name, w/2, h*0.7);
+            const bw=v*0.35, bh=v*0.12;
+            this.drawBtn(ctx, 'next', "TROCAR", w/2-bw-10, h*0.8, bw, bh);
+            this.drawBtn(ctx, 'ok', "OK", w/2+10, h*0.8, bw, bh, true);
+        },
+
+        uiArena: function(ctx,w,h) {
+            const v=Math.min(w,h); const a=ARENAS[this.selArena];
+            const g = ctx.createLinearGradient(0,0,0,h); g.addColorStop(0, a.bgTop); g.addColorStop(1, a.bgBot);
+            ctx.fillStyle=g; ctx.fillRect(0,0,w,h);
+            ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.font=`bold ${v*0.08}px 'Russo One'`;
+            ctx.fillText("ARENA", w/2, h*0.2);
+            ctx.font=`bold ${v*0.1}px 'Russo One'`; ctx.fillText(a.name, w/2, h*0.5);
+            const bw=v*0.35, bh=v*0.12;
+            this.drawBtn(ctx, 'next', "MUDAR", w/2-bw-10, h*0.8, bw, bh);
+            this.drawBtn(ctx, 'ok', "CALIBRAR", w/2+10, h*0.8, bw, bh, true);
+        },
+
+        uiLobby: function(ctx,w,h) {
+            const v=Math.min(w,h);
+            ctx.fillStyle='#000'; ctx.fillRect(0,0,w,h);
+            ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.font=`bold ${v*0.08}px 'Russo One'`;
+            ctx.fillText("BUSCANDO...", w/2, h/2);
+        },
+
+        uiOver: function(ctx,w,h) {
+            ctx.fillStyle='rgba(0,0,0,0.9)'; ctx.fillRect(0,0,w,h);
+            const v=Math.min(w,h);
             const win = this.p1.hp > 0;
-            ctx.fillStyle = win ? "#f1c40f" : "#e74c3c";
-            ctx.font = `bold ${vmin*0.15}px 'Russo One'`; ctx.textAlign="center";
-            ctx.fillText(win ? "VITÓRIA!" : "DERROTA", w/2, h*0.4);
-            ctx.fillStyle = "#fff"; ctx.font = `${vmin*0.06}px sans-serif`;
-            ctx.fillText("SCORE: " + this.p1.score, w/2, h*0.55);
-            
-            const btnW = vmin * 0.6;
-            const btnH = vmin * 0.15;
-            this.drawBtn(ctx, 'btnMenu', "MENU", w/2 - btnW/2, h*0.7, btnW, btnH, true);
-        },
-
-        // --- RENDER VISUAL MELHORADO (BRAÇOS DE LUTADOR) ---
-        drawArmSegment: function(ctx, shoulder, hand, color, width) {
-            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-            const mx = (shoulder.x + hand.x) / 2;
-            const my = (shoulder.y + hand.y) / 2;
-            const offsetDir = (hand.x < shoulder.x) ? -1 : 1;
-            const bend = 40; 
-            const elbowX = mx + (offsetDir * bend); const elbowY = my;
-            
-            // Contorno (Musculatura)
-            ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = width + 4;
-            ctx.beginPath(); ctx.moveTo(shoulder.x, shoulder.y); ctx.quadraticCurveTo(elbowX, elbowY, hand.x, hand.y); ctx.stroke();
-            
-            // Preenchimento (Pele)
-            ctx.strokeStyle = color; ctx.lineWidth = width;
-            ctx.beginPath(); ctx.moveTo(shoulder.x, shoulder.y); ctx.quadraticCurveTo(elbowX, elbowY, hand.x, hand.y); ctx.stroke();
-        },
-
-        drawRival: function(ctx, p, w, h) {
-            const char = CHARACTERS[p.charId];
-            const cx = p.head.x; const cy = p.head.y;
-            const bodyG = ctx.createLinearGradient(cx-40, cy, cx+40, cy+200); bodyG.addColorStop(0, char.color); bodyG.addColorStop(1, '#000');
-            ctx.fillStyle = bodyG; ctx.beginPath(); ctx.moveTo(cx-50, cy+60); ctx.lineTo(cx+50, cy+60); ctx.lineTo(cx+30, cy+250); ctx.lineTo(cx-30, cy+250); ctx.fill();
-            const lHandVis = { x: p.hands.l.x, y: p.hands.l.y + (p.hands.l.z * 1.5) };
-            const rHandVis = { x: p.hands.r.x, y: p.hands.r.y + (p.hands.r.z * 1.5) };
-            this.drawArmSegment(ctx, p.shoulders.l, lHandVis, char.skin, 20);
-            this.drawArmSegment(ctx, p.shoulders.r, rHandVis, char.skin, 20);
-            ctx.fillStyle = char.skin; ctx.beginPath(); ctx.arc(cx, cy, 50, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = char.hat; ctx.beginPath(); ctx.arc(cx, cy-20, 52, Math.PI, 0); ctx.fill(); ctx.fillRect(cx-55, cy-20, 110, 15);
-            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx, cy-35, 15, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = '#000'; ctx.font="bold 20px Arial"; ctx.textAlign='center'; ctx.fillText(char.name[0], cx, cy-28);
-            this.drawGlove(ctx, p.hands.l, char.color, false);
-            this.drawGlove(ctx, p.hands.r, char.color, false);
-            if(p.guard) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(cx, cy, 80, 0, Math.PI*2); ctx.stroke(); }
-        },
-
-        drawPlayer: function(ctx, p, w, h) {
-            const char = CHARACTERS[p.charId];
-            const lHandVis = { x: p.hands.l.x, y: p.hands.l.y + (100 - p.hands.l.z) };
-            const rHandVis = { x: p.hands.r.x, y: p.hands.r.y + (100 - p.hands.r.z) };
-            
-            // Braços saindo de baixo (POV Musculoso)
-            this.drawArmSegment(ctx, {x: w*0.1, y: h+80}, lHandVis, char.skin, 45); 
-            this.drawArmSegment(ctx, {x: w*0.9, y: h+80}, rHandVis, char.skin, 45); 
-            
-            ctx.globalAlpha = 0.9;
-            this.drawGlove(ctx, p.hands.l, char.color, true);
-            this.drawGlove(ctx, p.hands.r, char.color, true);
-            ctx.globalAlpha = 1.0;
-            if(p.guard) { ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(0,0,w,h); this.spawnMsg(w/2, h/2, "DEFESA", "#0f0", 1); }
-        },
-
-        drawGlove: function(ctx, hand, color, isSelf) {
-            let x = hand.x; let y = hand.y; let s = 1.0;
-            if (isSelf) { s = 1.3 + (hand.z * 0.015); y += (100 - hand.z); } else { s = 0.8 + (hand.z * 0.015); y += (hand.z * 1.5); }
-            ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
-            if (hand.state === 'PUNCH') { ctx.shadowColor = color; ctx.shadowBlur = 30; }
-            const g = ctx.createRadialGradient(-10, -10, 5, 0, 0, 45); g.addColorStop(0, '#fff'); g.addColorStop(1, color);
-            ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 45, 0, Math.PI*2); ctx.fill();
-            ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(0,0,45,0,Math.PI*2); ctx.stroke();
-            ctx.restore();
-        },
-
-        drawArena: function(ctx, w, h) {
-            const ar = ARENAS[this.selArena];
-            const mid = h * 0.45;
-            const g = ctx.createLinearGradient(0,0,0,mid); g.addColorStop(0, ar.bgTop); g.addColorStop(1, ar.bgBot); ctx.fillStyle = g; ctx.fillRect(0,0,w,mid);
-            ctx.fillStyle = ar.floor; ctx.beginPath(); ctx.moveTo(0, h); ctx.lineTo(w, h); ctx.lineTo(w * 0.8, mid); ctx.lineTo(w * 0.2, mid); ctx.fill();
-            ctx.strokeStyle = ar.rope; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(w*0.2, mid); ctx.lineTo(w*0.8, mid); ctx.moveTo(w*0.15, mid+40); ctx.lineTo(w*0.85, mid+40); ctx.stroke();
+            ctx.fillStyle=win?'#f1c40f':'#e74c3c';
+            ctx.textAlign='center'; ctx.font=`bold ${v*0.15}px 'Russo One'`;
+            ctx.fillText(win?"VITÓRIA!":"DERROTA", w/2, h*0.4);
+            ctx.fillStyle='#fff'; ctx.font=`bold ${v*0.05}px sans-serif`;
+            ctx.fillText("SCORE: "+this.p1.score, w/2, h*0.55);
+            this.drawBtn(ctx, 'menu', "MENU", w/2-v*0.25, h*0.7, v*0.5, v*0.15, true);
         },
 
         drawHUD: function(ctx, w, h) {
-            const barW = w * 0.35; const barH = Math.max(20, h*0.03);
-            ctx.fillStyle = "#333"; ctx.fillRect(20, 20, barW, barH);
-            ctx.fillStyle = "#e74c3c"; ctx.fillRect(20, 20, barW * (Math.max(0,this.p1.hp)/this.p1.maxHp), barH);
-            ctx.fillStyle = "#fff"; ctx.textAlign="left"; ctx.font=`bold ${barH}px sans-serif`; ctx.fillText(CHARACTERS[this.p1.charId].name, 20, 20 + barH*2);
-            ctx.fillStyle = "#f39c12"; ctx.fillRect(20, 20 + barH + 5, barW * (this.p1.stamina/100), 5);
-            const p2Max = this.p2.maxHp || 100;
-            ctx.fillStyle = "#333"; ctx.fillRect(w - 20 - barW, 20, barW, barH);
-            ctx.fillStyle = "#3498db"; ctx.fillRect(w - 20 - barW * (Math.max(0,this.p2.hp)/p2Max), 20, barW * (Math.max(0,this.p2.hp)/p2Max), barH);
-            ctx.fillStyle = "#fff"; ctx.textAlign="right"; ctx.fillText(this.isOnline ? "RIVAL" : "CPU", w - 20, 20 + barH*2);
-            ctx.fillStyle = "#fff"; ctx.textAlign="center"; ctx.font=`bold ${barH*2}px 'Russo One'`; ctx.fillText(Math.ceil(this.timer/60), w/2, barH*2);
+            const bw = w*0.35;
+            ctx.fillStyle='#333'; ctx.fillRect(20,20,bw,30);
+            ctx.fillStyle='#e74c3c'; ctx.fillRect(20,20,bw*(this.p1.hp/100),30);
+            ctx.fillStyle='#fff'; ctx.textAlign='left'; ctx.font='20px Arial'; ctx.fillText("P1", 25,42);
+            
+            ctx.fillStyle='#333'; ctx.fillRect(w-20-bw,20,bw,30);
+            ctx.fillStyle='#3498db'; ctx.fillRect(w-20-bw,20,bw*(this.p2.hp/100),30);
+            
+            ctx.textAlign='center'; ctx.fillText(Math.ceil(this.timer/60), w/2, 40);
         },
 
-        spawnParticle: function(x, y, c) { for(let i=0; i<10; i++) this.particles.push({x, y, vx:(Math.random()-0.5)*15, vy:(Math.random()-0.5)*15, life:1, c}); },
-        updateParticles: function(ctx) { this.particles.forEach((p,i) => { p.x+=p.vx; p.y+=p.vy; p.life-=0.05; ctx.globalAlpha = p.life; ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, Math.PI*2); ctx.fill(); }); ctx.globalAlpha=1; this.particles = this.particles.filter(p=>p.life>0); },
-        spawnMsg: function(x, y, t, c, l=40) { this.msgs.push({x, y, t, c, life: l}); },
-        drawMsgs: function(ctx) { this.msgs.forEach(m => { m.y-=1; m.life--; ctx.fillStyle=m.c; ctx.font="bold 40px 'Russo One'"; ctx.textAlign="center"; ctx.fillText(m.t, m.x, m.y); }); this.msgs = this.msgs.filter(m=>m.life>0); },
-        endRound: function() { if (this.round < CONF.ROUNDS) { this.round++; this.timer = CONF.ROUND_TIME * 60; window.System.msg("ROUND " + this.round); } else { this.state = 'GAMEOVER'; window.System.msg("TIME OVER"); } }
+        spawnParticles: function(x,y,c) { for(let i=0;i<5;i++) this.particles.push({x,y,c,l:1}); },
+        updateParticles: function(ctx) { this.particles.forEach(p=>{ p.l-=0.05; ctx.globalAlpha=p.l; ctx.fillStyle=p.c; ctx.beginPath(); ctx.arc(p.x,p.y,5,0,7); ctx.fill(); }); ctx.globalAlpha=1; },
+        spawnMsg: function(x,y,t,c) { this.msgs.push({x,y,t,c,l:40}); },
+        drawMsgs: function(ctx) { this.msgs.forEach(m=>{ m.y--; m.l--; ctx.fillStyle=m.c; ctx.font="30px 'Russo One'"; ctx.fillText(m.t,m.x,m.y); }); this.msgs=this.msgs.filter(m=>m.l>0); },
+        endGame: function() { this.state='GAMEOVER'; }
     };
 
     if(window.System) window.System.registerGame('box_pro', 'Super Boxing', '🥊', Game, { camOpacity: 0.2 });
