@@ -610,3 +610,5 @@
     };
 
     if(window.System) window.System.registerGame('box_pro', 'Super Boxing', '🥊', Game, { camOpacity: 0.2 });
+
+})();
