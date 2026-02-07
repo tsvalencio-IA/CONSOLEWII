@@ -1,12 +1,12 @@
 // =============================================================================
-// SUPER BOXING STADIUM: PLATINUM EDITION (REALITY FIX)
-// ARQUITETO: SENIOR DEV - HYBRID SYSTEM (OLD INPUT + NEW GRAPHICS)
+// SUPER BOXING STADIUM: CHAMPIONSHIP EDITION (GOLD MASTER V9 - CAMERA FIX)
+// ARQUITETO: SENIOR DEV - DYNAMIC RESOLUTION, IK & NETCODE
 // =============================================================================
 
 (function() {
 
     // -----------------------------------------------------------------
-    // 1. DADOS E CONFIGURAÇÕES VISUAIS
+    // 1. DADOS E CONFIGURAÇÕES
     // -----------------------------------------------------------------
 
     const CHARACTERS = [
@@ -26,41 +26,83 @@
     const CONF = {
         ROUNDS: 3,
         ROUND_TIME: 60,
-        SMOOTHING: 0.5,       // Menor = mais rápido (fiel ao usuário)
-        MIN_CONFIDENCE: 0.2,
-        REACH_SCALE: 2.5
+        VELOCITY_THRESH: 5,   // Sensibilidade para detectar intenção de soco
+        BLOCK_DIST: 140,      // Distância para considerar defesa
+        SMOOTHING: 0.8,       // Suavização do movimento
+        MIN_CONFIDENCE: 0.2,  // Filtro de ruído da câmera
+        REACH_SCALE: 2.5      // Multiplicador visual de profundidade
     };
 
+    // --- MATH UTILS ---
     const Utils = {
         dist: (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y),
         lerp: (a, b, t) => a + (b - a) * t,
         lerpPoint: (p1, p2, t) => ({ x: Utils.lerp(p1.x, p2.x, t), y: Utils.lerp(p1.y, p2.y, t) }),
         
-        // Mapeamento Robusto (Baseado no Kart)
+        // CORREÇÃO CRÍTICA DA CÂMERA: Adaptação à resolução real do vídeo
         toScreen: (kp, w, h) => {
             const vid = window.System ? window.System.video : null;
+            // Se o vídeo não estiver pronto, usa 640x480 como fallback seguro
             const vw = (vid && vid.videoWidth > 0) ? vid.videoWidth : 640;
             const vh = (vid && vid.videoHeight > 0) ? vid.videoHeight : 480;
-            // Inverte X para espelho
+            
             return { 
-                x: (1 - kp.x / vw) * w, 
+                x: (1 - kp.x / vw) * w, // Espelhado horizontalmente
                 y: (kp.y / vh) * h 
             };
         },
         
+        // Verifica toque em botão (UI)
         isInside: (x, y, btn) => {
-            const pad = 30; 
-            return x >= btn.x - pad && x <= btn.x + btn.w + pad && y >= btn.y - pad && y <= btn.y + btn.h + pad;
+            const pad = 30; // Hitbox generosa para mobile
+            return x >= btn.x - pad && x <= btn.x + btn.w + pad && 
+                   y >= btn.y - pad && y <= btn.y + btn.h + pad;
+        },
+
+        // SOLVER DE CINEMÁTICA INVERSA (IK)
+        solveIK: (shoulder, target, lenUpper, lenFore) => {
+            const dist = Utils.dist(shoulder, target);
+            const totalLen = lenUpper + lenFore;
+            
+            if (dist >= totalLen * 0.99) {
+                const ratio = totalLen / dist;
+                return {
+                    elbow: {
+                        x: shoulder.x + (target.x - shoulder.x) * (lenUpper / totalLen),
+                        y: shoulder.y + (target.y - shoulder.y) * (lenUpper / totalLen)
+                    },
+                    hand: {
+                        x: shoulder.x + (target.x - shoulder.x) * ratio,
+                        y: shoulder.y + (target.y - shoulder.y) * ratio
+                    },
+                    extension: 1.0
+                };
+            }
+
+            const angShoulder = Math.atan2(target.y - shoulder.y, target.x - shoulder.x);
+            const cosAngle = (dist * dist + lenUpper * lenUpper - lenFore * lenFore) / (2 * dist * lenUpper);
+            const angle = Math.acos(Math.max(-1, Math.min(1, cosAngle)));
+            const sideFactor = (target.x < shoulder.x) ? 1 : -1; 
+            
+            // Estimativa estável para o cotovelo
+            return {
+                elbow: { 
+                     x: (shoulder.x + target.x)/2 + (target.x < shoulder.x ? -40 : 40),
+                     y: (shoulder.y + target.y)/2 + 20
+                },
+                hand: target,
+                extension: dist / totalLen
+            };
         }
     };
 
     // -----------------------------------------------------------------
-    // 2. LÓGICA DO JOGO
+    // 2. ESTADO E LÓGICA
     // -----------------------------------------------------------------
 
     const Game = {
         state: 'MODE_SELECT',
-        roomId: 'boxing_platinum_v1',
+        roomId: 'boxing_v8_global',
         isOnline: false,
         dbRef: null,
         uiButtons: {},
@@ -77,26 +119,38 @@
         
         // --- JOGADOR (P1) ---
         p1: { 
-            hp: 100, maxHp: 100, score: 0,
+            hp: 100, maxHp: 100, stamina: 100, score: 0,
             head: {x:0, y:0},
-            // Dados brutos (Input Real)
-            hands: { 
-                l: {x:0, y:0, z:0, vel:0}, 
-                r: {x:0, y:0, z:0, vel:0} 
+            // Dados brutos suavizados
+            raw: { 
+                ls: {x:0,y:0}, rs: {x:0,y:0}, // Ombros
+                le: {x:0,y:0}, re: {x:0,y:0}, // Cotovelos
+                lw: {x:0,y:0}, rw: {x:0,y:0}  // Punhos
             },
-            elbows: { l:{x:0,y:0}, r:{x:0,y:0} },
-            shoulders: { l:{x:0,y:0}, r:{x:0,y:0} }, 
+            // Dados processados para render
+            visual: {
+                armL: { s:{x:0,y:0}, e:{x:0,y:0}, w:{x:0,y:0}, z:0 },
+                armR: { s:{x:0,y:0}, e:{x:0,y:0}, w:{x:0,y:0}, z:0 }
+            },
             guard: false,
-            calib: { active: false, samples: 0, maxReach: 150, progress: 0 }
+            // Calibração
+            calib: { 
+                active: false,
+                samples: 0,
+                upperLen: 120, // Ombro->Cotovelo
+                foreLen: 100,  // Cotovelo->Punho
+                totalLen: 220
+            }
         },
 
-        // --- OPONENTE (P2) ---
+        // --- OPONENTE (P2 - IA ou NETWORK) ---
         p2: { 
             hp: 100, maxHp: 100, id: null, isRemote: false, charId: 0,
             head: {x:0, y:0},
-            hands: { l: {x:0, y:0, z:0}, r: {x:0, y:0, z:0} },
-            elbows: { l:{x:0,y:0}, r:{x:0,y:0} },
-            shoulders: { l:{x:0,y:0}, r:{x:0,y:0} },
+            visual: {
+                armL: { s:{x:0,y:0}, e:{x:0,y:0}, w:{x:0,y:0}, z:0 },
+                armR: { s:{x:0,y:0}, e:{x:0,y:0}, w:{x:0,y:0}, z:0 }
+            },
             guard: false,
             ai: { timer: 0, state: 'IDLE' }
         },
@@ -105,18 +159,21 @@
         msgs: [],
 
         // =================================================================
-        // SISTEMA & INPUT
+        // CICLO DE VIDA E INPUT
         // =================================================================
 
         init: function() {
             this.state = 'MODE_SELECT';
             this.cleanup();
-            if(window.System.msg) window.System.msg("SUPER BOXING PLATINUM");
+            if(window.System.msg) window.System.msg("BOXE SIMULATOR V9");
             this.setupInput();
         },
 
         cleanup: function() {
-            if (this.dbRef) try { this.dbRef.child('players/' + window.System.playerId).remove(); this.dbRef.off(); } catch(e){}
+            if (this.dbRef) {
+                try { this.dbRef.child('players/' + window.System.playerId).remove(); this.dbRef.off(); } 
+                catch(e){}
+            }
             window.System.canvas.onclick = null;
         },
 
@@ -138,7 +195,8 @@
                     if (btn('next')) { this.selArena = (this.selArena+1)%ARENAS.length; window.Sfx.play(600,'square',0.1); }
                     if (btn('ok')) this.startCalib();
                 } else if (this.state === 'CALIBRATE') {
-                    if (btn('done') && this.p1.calib.progress > 10) this.finishCalib();
+                    // Trava mínima de amostras
+                    if (btn('done') && this.p1.calib.samples > 10) this.finishCalib();
                 } else if (this.state === 'GAMEOVER') {
                     if (btn('menu')) this.init();
                 }
@@ -155,15 +213,17 @@
 
         startCalib: function() {
             this.state = 'CALIBRATE';
-            this.p1.calib.progress = 0;
-            this.p1.calib.maxReach = 100;
+            this.p1.calib.samples = 0;
             this.p1.calib.active = true;
-            window.System.msg("ABRA OS BRAÇOS");
+            window.System.msg("POSIÇÃO T-POSE");
         },
 
         finishCalib: function() {
             this.p1.calib.active = false;
-            this.p1.calib.maxReach = Math.max(80, this.p1.calib.maxReach);
+            // Garante valores mínimos se a calibração falhou
+            this.p1.calib.upperLen = Math.max(50, this.p1.calib.upperLen);
+            this.p1.calib.foreLen = Math.max(50, this.p1.calib.foreLen);
+            this.p1.calib.totalLen = this.p1.calib.upperLen + this.p1.calib.foreLen;
             this.startGame();
             window.Sfx.click();
         },
@@ -175,25 +235,24 @@
             this.timer = CONF.ROUND_TIME * 60;
             this.particles = [];
             
+            // Reset posições para o centro
             const w = window.System.canvas.width;
             const h = window.System.canvas.height;
-            this.p1.head = {x: w/2, y: h/2};
-            // Inicializa braços para não bugar render antes do tracking
-            this.p1.shoulders = { l:{x:w*0.2, y:h}, r:{x:w*0.8, y:h} };
-            this.p1.hands = { l:{x:w*0.2, y:h*0.7, z:0, vel:0}, r:{x:w*0.8, y:h*0.7, z:0, vel:0} };
+            this.p1.head = {x:w/2, y:h/2};
 
             if (this.isOnline) {
                 this.connectLobby();
             } else {
+                // Setup CPU
                 this.p2.charId = Math.floor(Math.random() * CHARACTERS.length);
                 this.p2.hp = 100;
                 this.p2.isRemote = false;
-                // IA Inicial
-                this.p2.head = {x: w/2, y: h/3};
-                this.p2.shoulders = {l: {x:w/2-60, y:h/3+80}, r: {x:w/2+60, y:h/3+80}};
-                this.p2.elbows = {l: {x:w/2-80, y:h/3+140}, r: {x:w/2+80, y:h/3+140}};
-                this.p2.hands = { l: {x:w/2-40, y:h/3+80, z:0}, r: {x:w/2+40, y:h/3+80, z:0} };
                 
+                // Inicializa IA no centro
+                this.p2.head = {x: w/2, y: h/3};
+                this.p2.visual.armL = { s:{x:w/2-60, y:h/3+100}, e:{x:w/2-80, y:h/3+150}, w:{x:w/2-50, y:h/3+80}, z:0 };
+                this.p2.visual.armR = { s:{x:w/2+60, y:h/3+100}, e:{x:w/2+80, y:h/3+150}, w:{x:w/2+50, y:h/3+80}, z:0 };
+
                 this.state = 'FIGHT';
                 window.System.msg("LUTA!");
             }
@@ -203,17 +262,26 @@
             this.state = 'LOBBY';
             this.dbRef = window.DB.ref('rooms/' + this.roomId);
             const myRef = this.dbRef.child('players/' + window.System.playerId);
-            myRef.set({ charId: this.selChar, hp: 100, lastSeen: firebase.database.ServerValue.TIMESTAMP });
+            
+            // Entra na sala
+            myRef.set({ 
+                charId: this.selChar, hp: 100, 
+                lastSeen: firebase.database.ServerValue.TIMESTAMP 
+            });
             myRef.onDisconnect().remove();
 
+            // Ouve a sala
             this.dbRef.child('players').on('value', snap => {
                 const players = snap.val();
                 if (!players) return;
+
+                // Acha o ID do oponente
                 const opId = Object.keys(players).find(id => id !== window.System.playerId);
 
                 if (opId) {
                     const p2Data = players[opId];
                     if (this.state === 'LOBBY') {
+                        // Encontrou! Começa a luta imediatamente
                         this.p2.id = opId;
                         this.p2.charId = p2Data.charId || 0;
                         this.p2.hp = 100;
@@ -222,17 +290,21 @@
                         window.System.msg("VS " + CHARACTERS[this.p2.charId].name);
                     }
                     if (this.state === 'FIGHT') {
+                        // Sync
                         this.p2.hp = p2Data.hp;
                         if (p2Data.pose) {
                             this.p2.head = p2Data.pose.h;
-                            this.p2.shoulders = p2Data.pose.s;
-                            this.p2.elbows = p2Data.pose.e;
-                            this.p2.hands = p2Data.pose.w;
+                            this.p2.visual.armL = p2Data.pose.al;
+                            this.p2.visual.armR = p2Data.pose.ar;
                             this.p2.guard = p2Data.pose.g;
                         }
                     }
-                } else if (this.state === 'FIGHT') {
-                    this.state = 'GAMEOVER'; window.System.msg("OPONENTE SAIU");
+                } else {
+                    // Oponente saiu
+                    if (this.state === 'FIGHT') {
+                        this.state = 'GAMEOVER';
+                        window.System.msg("OPONENTE DESCONECTOU");
+                    }
                 }
             });
         },
@@ -245,10 +317,10 @@
             this.frame++;
             this.uiButtons = {};
 
-            // 1. INPUT (CRUCIAL: Sempre roda para atualizar posições)
+            // 1. INPUT TRACKING (Essencial)
             this.processSkeleton(w, h, pose);
 
-            // 2. BACKGROUND
+            // 2. BACKGROUND (Menus)
             if (this.state !== 'FIGHT') {
                 const g = ctx.createLinearGradient(0,0,0,h);
                 g.addColorStop(0, '#1a1a2e'); g.addColorStop(1, '#16213e');
@@ -294,21 +366,23 @@
             const smooth = CONF.SMOOTHING;
             const thresh = CONF.MIN_CONFIDENCE;
 
+            // Helper para pegar ponto ou fallback
             const getP = (i, fallback) => (k[i] && k[i].score > thresh) ? Utils.toScreen(k[i], w, h) : fallback;
 
-            // Dados Crus
+            // 1. Captura Dados Brutos
             const nose = getP(0, this.p1.head);
             const ls = getP(5, {x:w*0.3, y:h*0.8});
             const rs = getP(6, {x:w*0.7, y:h*0.8});
-            const le = getP(7, null); 
+            const le = getP(7, null); // Se null, calculamos via IK
             const re = getP(8, null);
-            const lw = getP(9, this.p1.hands.l);
-            const rw = getP(10, this.p1.hands.r);
+            const lw = getP(9, this.p1.raw.lw);
+            const rw = getP(10, this.p1.raw.rw);
 
-            // CALIBRAÇÃO
+            // CALIBRAÇÃO (Visualização e Medição)
             if (this.p1.calib.active) {
+                // Desenha pontos para feedback visual
                 this.p1.head = nose; 
-                // Feedback visual na tela de calibração
+                // Se detectou pulsos, mede
                 if (k[9] && k[10]) {
                     const span = Utils.dist(lw, rw);
                     if (span > this.p1.calib.maxReach) this.p1.calib.maxReach = span / 2;
@@ -317,64 +391,72 @@
                 return;
             }
 
-            // SUAVIZAÇÃO E POSICIONAMENTO 1:1
+            // SUAVIZAÇÃO DOS DADOS BRUTOS
             this.p1.head = Utils.lerpPoint(this.p1.head, nose, smooth);
-            
-            // Ombros Virtuais (POV) - Base fixa embaixo, move X com cabeça
-            this.p1.shoulders.l = { x: Utils.lerp(w*0.1, w*0.4, (nose.x/w)), y: h + 50 };
-            this.p1.shoulders.r = { x: Utils.lerp(w*0.9, w*0.6, (nose.x/w)), y: h + 50 };
+            this.p1.raw.ls = Utils.lerpPoint(this.p1.raw.ls, ls, smooth);
+            this.p1.raw.rs = Utils.lerpPoint(this.p1.raw.rs, rs, smooth);
+            // Punhos mais rápidos
+            this.p1.raw.lw = Utils.lerpPoint(this.p1.raw.lw, lw, 0.5); 
+            this.p1.raw.rw = Utils.lerpPoint(this.p1.raw.rw, rw, 0.5);
 
-            // Processa Mãos
-            this.processHand('l', lw, le, this.p1.shoulders.l, w, h);
-            this.processHand('r', rw, re, this.p1.shoulders.r, w, h);
+            // PROCESSA BRAÇOS (VISUAL + FÍSICA)
+            // Lado Esquerdo
+            this.processArm('armL', this.p1.raw.ls, le, this.p1.raw.lw, 'left', w, h);
+            // Lado Direito
+            this.processArm('armR', this.p1.raw.rs, re, this.p1.raw.rw, 'right', w, h);
 
-            // Guarda
-            const dL = Utils.dist(this.p1.hands.l, nose);
-            const dR = Utils.dist(this.p1.hands.r, nose);
+            // GUARDA
+            const dL = Utils.dist(this.p1.visual.armL.w, this.p1.head);
+            const dR = Utils.dist(this.p1.visual.armR.w, this.p1.head);
             const guardDist = this.p1.calib.maxReach * 0.7; 
             this.p1.guard = (dL < guardDist && dR < guardDist);
+
+            if(this.p1.stamina < 100) this.p1.stamina += 0.3;
         },
 
-        processHand: function(side, rawPos, rawElbow, shoulderPos, w, h) {
-            const hand = this.p1.hands[side];
-            const elbow = this.p1.elbows[side];
+        processArm: function(armKey, sRaw, eRaw, wRaw, side, screenW, screenH) {
+            const visual = this.p1.visual[armKey];
+            
+            // 1. OMBRO VIRTUAL (Base fixa embaixo da tela para POV)
+            const baseX = (side === 'left') ? screenW * 0.1 : screenW * 0.9;
+            // Move X levemente com a cabeça para dar parallax
+            visual.s.x = Utils.lerp(baseX, screenW/2, (this.p1.head.x / screenW - 0.5) * 0.5);
+            visual.s.y = screenH + 80; // Fora da tela
 
-            // 1. Posição XY (Fiel 1:1)
-            const speed = Utils.dist(hand, rawPos);
-            hand.x = Utils.lerp(hand.x, rawPos.x, CONF.SMOOTHING);
-            hand.y = Utils.lerp(hand.y, rawPos.y, CONF.SMOOTHING);
-            hand.vel = speed;
+            // 2. PUNHO (Segue 1:1 o raw)
+            // Velocidade (Delta)
+            const speed = Utils.dist(visual.w, wRaw);
+            visual.w.x = wRaw.x;
+            visual.w.y = wRaw.y;
 
-            // 2. Cotovelo (Se não detectado, interpola para visual natural)
-            if (rawElbow) {
-                elbow.x = Utils.lerp(elbow.x, rawElbow.x, CONF.SMOOTHING);
-                elbow.y = Utils.lerp(elbow.y, rawElbow.y, CONF.SMOOTHING);
+            // 3. COTOVELO (Híbrido)
+            if (eRaw) {
+                // Se câmera viu, usa real (suavizado)
+                visual.e = Utils.lerpPoint(visual.e, eRaw, CONF.SMOOTHING);
             } else {
-                // Cotovelo estimado (ponto médio puxado para fora)
-                const midX = (shoulderPos.x + hand.x) / 2;
-                const midY = (shoulderPos.y + hand.y) / 2;
-                const sideDir = (side === 'l') ? -1 : 1;
-                elbow.x = Utils.lerp(elbow.x, midX + (sideDir * 40), 0.1);
-                elbow.y = Utils.lerp(elbow.y, midY, 0.1);
+                // Se não, usa IK para "dobrar" o braço naturalmente
+                const ik = Utils.solveIK(visual.s, visual.w, this.p1.calib.upperLen, this.p1.calib.foreLen).elbow;
+                visual.e = Utils.lerpPoint(visual.e, ik, 0.1);
             }
 
-            // 3. Z-Depth (Simulado pela extensão do braço)
-            const distFromShoulder = Utils.dist(rawPos, shoulderPos);
-            // Normaliza extensão (0 a 1.0)
-            const extRatio = Math.min(1.5, distFromShoulder / this.p1.calib.maxReach);
-            // Mapeia para Z visual
-            const targetZ = Math.max(0, (extRatio - 0.4) * 200);
-            hand.z = Utils.lerp(hand.z, targetZ, 0.3);
+            // 4. Z-DEPTH (Extensão)
+            // Distância visual na tela entre ombro real e punho real
+            const dist2D = Utils.dist(sRaw, wRaw);
+            const extRatio = Math.min(1.5, dist2D / this.p1.calib.maxReach);
+            
+            // Mapeia para Z (Soco = mão longe do ombro)
+            const targetZ = Math.max(0, (extRatio - 0.4) * 250);
+            visual.z = Utils.lerp(visual.z, targetZ, 0.3);
 
-            // 4. Detecção de Impacto
+            // 5. COLISÃO
             // Se velocidade alta E mão esticada
-            if (speed > 5 && hand.z > 60) {
-                this.checkHit(hand, speed);
+            if (speed > CONF.VELOCITY_THRESH && visual.z > 60 && this.p1.stamina > 5) {
+                // Soco!
+                this.checkHit(visual.w, speed);
             }
         },
 
         checkHit: function(handPos, speed) {
-            // Hitbox Rival
             const rX = this.p2.head.x;
             const rY = this.p2.head.y;
             
@@ -386,6 +468,7 @@
                     const dmg = Math.floor(5 + speed * 0.3);
                     this.p2.hp -= dmg;
                     this.p1.score += dmg * 10;
+                    this.p1.stamina -= 8;
                     this.spawnParticles(rX, rY, '#f00');
                     this.spawnMsg(rX, rY, dmg, "#ff0");
                     window.Sfx.hit();
@@ -404,45 +487,45 @@
             cpu.head.y = h/3 + Math.cos(t*0.5)*20;
             
             const baseY = cpu.head.y + 80;
-            cpu.shoulders.l = {x: cpu.head.x-60, y: baseY};
-            cpu.shoulders.r = {x: cpu.head.x+60, y: baseY};
+            cpu.visual.armL.s = {x: cpu.head.x-60, y: baseY};
+            cpu.visual.armR.s = {x: cpu.head.x+60, y: baseY};
 
             // Ataque
             if (cpu.ai.timer-- <= 0) {
                 const r = Math.random();
-                if (r < 0.03) { 
-                    const side = Math.random()>0.5 ? 'l' : 'r';
-                    cpu.hands[side].z = 150; // Soco
-                    cpu.hands[side].x = w/2; cpu.hands[side].y = h/2+100;
+                if (r < 0.03) { // Soco
+                    const side = Math.random()>0.5 ? 'armL' : 'armR';
+                    cpu.visual[side].z = 150; // Estica
+                    cpu.visual[side].w = {x: w/2, y: h/2+100}; // Mira
                     cpu.ai.timer = 50;
+                    
                     if (!this.p1.guard) {
                         this.p1.hp -= 5;
                         window.Gfx.shakeScreen(5);
                         this.spawnMsg(w/2, h/2, "OUCH", "#f00");
                     } else window.Sfx.play(100, 'sine', 0.1);
 
-                } else if (r < 0.05) { 
+                } else if (r < 0.05) { // Guarda
                     cpu.guard = !cpu.guard;
                     cpu.ai.timer = 60;
-                } else { 
-                    cpu.hands.l.z = 0; cpu.hands.r.z = 0;
+                } else { // Idle
+                    cpu.visual.armL.z = 0;
+                    cpu.visual.armR.z = 0;
                 }
             }
 
             // Animação Mãos Idle
-            ['l', 'r'].forEach((s, i) => {
-                const hand = cpu.hands[s];
-                if (hand.z < 10) {
-                    hand.x = Utils.lerp(hand.x, cpu.head.x + (i===0?-50:50), 0.1);
-                    hand.y = Utils.lerp(hand.y, baseY + (cpu.guard?-40:40), 0.1);
+            ['armL', 'armR'].forEach((k, i) => {
+                const arm = cpu.visual[k];
+                if (arm.z < 10) {
+                    arm.w.x = Utils.lerp(arm.w.x, cpu.head.x + (i===0?-50:50), 0.1);
+                    arm.w.y = Utils.lerp(arm.w.y, baseY + (cpu.guard?-40:40), 0.1);
                 } else {
-                    hand.z -= 5; 
+                    arm.z -= 5; // Retrai soco
                 }
-                // IK Cotovelo IA (Simples)
-                cpu.elbows[s] = {
-                    x: (cpu.shoulders[s].x + hand.x)/2 + (i===0?-40:40),
-                    y: (cpu.shoulders[s].y + hand.y)/2 + 20
-                };
+                // IK Cotovelo IA
+                const ik = Utils.solveIK(arm.s, arm.w, 60, 60);
+                arm.e = ik.elbow;
             });
         },
 
@@ -452,9 +535,8 @@
                 hp: this.p1.hp,
                 pose: {
                     h: {x:Math.round(this.p1.head.x), y:Math.round(this.p1.head.y)},
-                    s: this.p1.shoulders,
-                    e: this.p1.elbows,
-                    w: this.p1.hands,
+                    al: {s:this.p1.visual.armL.s, e:this.p1.visual.armL.e, w:this.p1.visual.armL.w, z:Math.round(this.p1.visual.armL.z)},
+                    ar: {s:this.p1.visual.armR.s, e:this.p1.visual.armR.e, w:this.p1.visual.armR.w, z:Math.round(this.p1.visual.armR.z)},
                     g: this.p1.guard
                 }
             });
@@ -478,40 +560,47 @@
 
         drawCharacter: function(ctx, p, isSelf, w, h) {
             const char = CHARACTERS[p.charId];
-            
-            if (!isSelf) {
+            const arms = p.visual;
+
+            if (!isSelf) { // RIVAL
                 const cx = p.head.x; const cy = p.head.y;
                 const bg = ctx.createLinearGradient(cx-40,cy,cx+40,cy+200); 
                 bg.addColorStop(0, char.color); bg.addColorStop(1, '#000');
                 ctx.fillStyle=bg; ctx.beginPath(); ctx.moveTo(cx-50,cy+60); ctx.lineTo(cx+50,cy+60); ctx.lineTo(cx+30,cy+250); ctx.lineTo(cx-30,cy+250); ctx.fill();
                 
+                // Desenha Braços (Trás)
+                this.drawArm(ctx, arms.armL, char.skin, 18, 0.8);
+                this.drawArm(ctx, arms.armR, char.skin, 18, 0.8);
+
                 ctx.fillStyle=char.skin; ctx.beginPath(); ctx.arc(cx,cy,45,0,7); ctx.fill();
                 ctx.fillStyle=char.hat; ctx.beginPath(); ctx.arc(cx,cy-15,47,Math.PI,0); ctx.fill(); ctx.fillRect(cx-50,cy-15,100,15);
                 ctx.fillStyle='#000'; ctx.font="20px Arial"; ctx.textAlign='center'; ctx.fillText(char.name[0], cx, cy-28);
                 
-                this.drawArmSegment(ctx, p.shoulders.l, p.elbows.l, p.hands.l, char.skin, 18);
-                this.drawArmSegment(ctx, p.shoulders.r, p.elbows.r, p.hands.r, char.skin, 18);
-            } else {
-                // PLAYER
-                this.drawArmSegment(ctx, p.shoulders.l, p.elbows.l, p.hands.l, char.skin, 40);
-                this.drawArmSegment(ctx, p.shoulders.r, p.elbows.r, p.hands.r, char.skin, 40);
-            }
+                // Luvas
+                this.drawGlove(ctx, arms.armL.w, char.color, 0.8 + arms.armL.z/300);
+                this.drawGlove(ctx, arms.armR.w, char.color, 0.8 + arms.armR.z/300);
 
-            // Luvas
-            this.drawGlove(ctx, p.hands.l, char.color, isSelf ? (1+p.hands.l.z/300) : (0.8+p.hands.l.z/300));
-            this.drawGlove(ctx, p.hands.r, char.color, isSelf ? (1+p.hands.r.z/300) : (0.8+p.hands.r.z/300));
+            } else { // PLAYER
+                // Braços (POV)
+                this.drawArm(ctx, arms.armL, char.skin, 40, 1.0);
+                this.drawArm(ctx, arms.armR, char.skin, 40, 1.0);
+                
+                // Luvas (Maiores)
+                this.drawGlove(ctx, arms.armL.w, char.color, 1.2 + arms.armL.z/300);
+                this.drawGlove(ctx, arms.armR.w, char.color, 1.2 + arms.armR.z/300);
+            }
 
             if(p.guard && isSelf) { ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.fillRect(0,0,w,h); }
         },
 
-        drawArmSegment: function(ctx, s, e, w, color, width) {
-            ctx.lineCap='round'; ctx.lineJoin='round';
+        drawArm: function(ctx, arm, color, width, s) {
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
             // Contorno
-            ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=width+4;
-            ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(e.x, e.y); ctx.lineTo(w.x, w.y); ctx.stroke();
+            ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = width+4;
+            ctx.beginPath(); ctx.moveTo(arm.s.x, arm.s.y); ctx.lineTo(arm.e.x, arm.e.y); ctx.lineTo(arm.w.x, arm.w.y); ctx.stroke();
             // Pele
-            ctx.strokeStyle=color; ctx.lineWidth=width;
-            ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(e.x, e.y); ctx.lineTo(w.x, w.y); ctx.stroke();
+            ctx.strokeStyle = color; ctx.lineWidth = width;
+            ctx.beginPath(); ctx.moveTo(arm.s.x, arm.s.y); ctx.lineTo(arm.e.x, arm.e.y); ctx.lineTo(arm.w.x, arm.w.y); ctx.stroke();
         },
 
         drawGlove: function(ctx, pos, color, s) {
@@ -522,40 +611,7 @@
             ctx.restore();
         },
 
-        uiCalib: function(ctx,w,h,pose) {
-            ctx.fillStyle='#111'; ctx.fillRect(0,0,w,h);
-            const v=Math.min(w,h);
-            ctx.fillStyle='#0ff'; ctx.textAlign='center'; ctx.font=`bold ${v*0.06}px 'Russo One'`;
-            ctx.fillText("CALIBRAÇÃO", w/2, h*0.15);
-            ctx.fillStyle='#fff'; ctx.font=`${v*0.04}px sans-serif`;
-            ctx.fillText("FAÇA A POSE DE 'T'", w/2, h*0.25);
-            
-            if(pose && pose.keypoints) {
-                const k = pose.keypoints;
-                const drawP = (i,c) => {
-                    if(k[i] && k[i].score > CONF.MIN_CONFIDENCE) {
-                        const p = Utils.toScreen(k[i], w, h);
-                        ctx.fillStyle=c; ctx.beginPath(); ctx.arc(p.x,p.y,15,0,7); ctx.fill();
-                    }
-                };
-                drawP(5,'#0f0'); drawP(6,'#0f0'); drawP(9,'#0ff'); drawP(10,'#0ff');
-                
-                const l=k[9], r=k[10];
-                if(l && r && l.score > 0.2 && r.score > 0.2) {
-                     const span = Math.abs(l.x - r.x);
-                     if (span > 50) this.p1.calib.progress = Math.min(100, this.p1.calib.progress+2);
-                }
-            }
-
-            const pct = this.p1.calib.progress / 100; 
-            ctx.fillStyle='#333'; ctx.fillRect(w*0.2, h*0.7, w*0.6, 30);
-            ctx.fillStyle='#0f0'; ctx.fillRect(w*0.2, h*0.7, w*0.6*pct, 30);
-
-            if(this.p1.calib.progress > 20) {
-                this.drawBtn(ctx, 'done', "JOGAR AGORA!", w/2-v*0.3, h*0.7, v*0.6, v*0.15, true);
-            }
-        },
-
+        // --- UI ---
         drawBtn: function(ctx, id, txt, x, y, w, h, active) {
             this.uiButtons[id] = {x,y,w,h};
             ctx.shadowBlur=10; ctx.shadowColor='rgba(0,0,0,0.5)';
@@ -563,12 +619,12 @@
             ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,h,20); else ctx.rect(x,y,w,h); ctx.fill();
             ctx.strokeStyle='#fff'; ctx.lineWidth=3; ctx.stroke();
             ctx.shadowBlur=0; ctx.fillStyle='#fff'; 
-            ctx.font=`bold ${h*0.5}px 'Russo One'`; ctx.textAlign='center'; ctx.textBaseline='middle';
+            ctx.font=`bold ${h*0.4}px 'Russo One'`; ctx.textAlign='center'; ctx.textBaseline='middle';
             ctx.fillText(txt, x+w/2, y+h/2);
         },
 
         uiMode: function(ctx,w,h) {
-            const v = Math.min(w,h);
+            const v=Math.min(w,h);
             ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.font=`bold ${v*0.1}px 'Russo One'`;
             ctx.fillText("SUPER BOXING", w/2, h*0.2);
             this.drawBtn(ctx, 'off', "OFFLINE", w/2-v*0.35, h*0.4, v*0.7, v*0.15);
@@ -597,6 +653,41 @@
             const bw=v*0.35, bh=v*0.12;
             this.drawBtn(ctx, 'next', "MUDAR", w/2-bw-10, h*0.8, bw, bh);
             this.drawBtn(ctx, 'ok', "CALIBRAR", w/2+10, h*0.8, bw, bh, true);
+        },
+
+        uiCalib: function(ctx,w,h,pose) {
+            ctx.fillStyle='#111'; ctx.fillRect(0,0,w,h);
+            const v=Math.min(w,h);
+            ctx.fillStyle='#0ff'; ctx.textAlign='center'; ctx.font=`bold ${v*0.06}px 'Russo One'`;
+            ctx.fillText("CALIBRAÇÃO", w/2, h*0.15);
+            ctx.fillStyle='#fff'; ctx.font=`${v*0.04}px sans-serif`;
+            ctx.fillText("FAÇA A POSE DE 'T'", w/2, h*0.25);
+            
+            // Feedback Visual de Rastreamento (CRÍTICO)
+            if(pose && pose.keypoints) {
+                const k = pose.keypoints;
+                const drawP = (i,c) => {
+                    if(k[i] && k[i].score > CONF.MIN_CONFIDENCE) {
+                        const p = Utils.toScreen(k[i], w, h);
+                        ctx.fillStyle=c; ctx.beginPath(); ctx.arc(p.x,p.y,15,0,7); ctx.fill();
+                    }
+                };
+                drawP(5,'#0f0'); drawP(6,'#0f0'); drawP(9,'#0ff'); drawP(10,'#0ff');
+                
+                const l=k[9], r=k[10];
+                if(l && r && l.score > 0.2 && r.score > 0.2) {
+                     const span = Math.abs(l.x - r.x);
+                     if (span > 50) this.p1.calib.progress = Math.min(100, this.p1.calib.progress+2);
+                }
+            }
+
+            const pct = this.p1.calib.progress / 100; 
+            ctx.fillStyle='#333'; ctx.fillRect(w*0.2, h*0.7, w*0.6, 30);
+            ctx.fillStyle='#0f0'; ctx.fillRect(w*0.2, h*0.7, w*0.6*pct, 30);
+
+            if(this.p1.calib.progress > 20) {
+                this.drawBtn(ctx, 'done', "JOGAR AGORA!", w/2-v*0.3, h*0.7, v*0.6, v*0.15, true);
+            }
         },
 
         uiLobby: function(ctx,w,h) {
