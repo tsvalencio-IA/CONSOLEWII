@@ -1,7 +1,7 @@
 // =============================================================================
 // SUPER BOXING: ENTERPRISE EDITION (ROBUST & CRASH-PROOF)
 // ARQUITETO: SENIOR DEV (CODE 177)
-// STATUS: GOLD MASTER (REFACTORED v2.0)
+// STATUS: GOLD MASTER (REFACTORED v2.1 - MULTIPLAYER FIX)
 // =============================================================================
 
 (function() {
@@ -146,7 +146,6 @@
                     this.playSound('sine', 600);
                 } 
                 else if (this.state === 'CHAR_SELECT') {
-                    // Seleção por colunas (Regra 1: Região de clique real)
                     const colW = w / CHARACTERS.length;
                     const clickedIndex = Math.floor(x / colW);
                     
@@ -154,7 +153,6 @@
                         this.selChar = clickedIndex;
                         this.playSound('sine', 600);
                         
-                        // Botão confirmar (Área inferior)
                         if (y > h * 0.75) {
                             this.startGame();
                             this.playSound('square', 400);
@@ -174,17 +172,15 @@
         },
 
         startGame: function() {
-            // Garante que p1 usa o selChar selecionado visualmente
             this.p1 = this.createPlayer('p1', this.selChar);
             
             if (this.isOnline) {
                 this.connectLobby();
             } else {
-                // Seleção determinística do oponente (Regra 1: Não aleatório)
                 const cpuId = (this.selChar + 1) % CHARACTERS.length;
                 this.p2 = this.createPlayer('p2', cpuId);
                 this.state = 'FIGHT';
-                this.timer = CONF.ROUND_TIME; // Segundos
+                this.timer = CONF.ROUND_TIME; 
                 this.lastTime = performance.now();
                 window.System.msg("FIGHT!");
             }
@@ -231,25 +227,42 @@
         syncPose: function(local, remote) {
             // Interpolação para rede (suave)
             const f = 0.5; // Fator fixo para rede
-            local.head = SafeUtils.lerpPoint(local.head, remote.head, f, 1); // dt=1 fake
-            local.shoulders.l = SafeUtils.lerpPoint(local.shoulders.l, remote.shoulders.l, f, 1);
-            local.shoulders.r = SafeUtils.lerpPoint(local.shoulders.r, remote.shoulders.r, f, 1);
-            local.elbows.l = SafeUtils.lerpPoint(local.elbows.l, remote.elbows.l, f, 1);
-            local.elbows.r = SafeUtils.lerpPoint(local.elbows.r, remote.elbows.r, f, 1);
-            local.wrists.l = SafeUtils.lerpPoint(local.wrists.l, remote.wrists.l, f, 1);
-            local.wrists.r = SafeUtils.lerpPoint(local.wrists.r, remote.wrists.r, f, 1);
-            local.wrists.l.state = remote.wrists.l.state;
-            local.wrists.r.state = remote.wrists.r.state;
+            
+            // Helper que atualiza propriedades em vez de substituir objeto
+            // e GARANTE que Z seja preservado
+            const syncPart = (l, r) => {
+                if(!r) return;
+                const next = SafeUtils.lerpPoint(l, r, f, 1);
+                l.x = next.x;
+                l.y = next.y;
+            };
+
+            const syncLimb = (l, r) => {
+                if(!r) return;
+                syncPart(l, r);
+                // CRUCIAL: Atualiza Z e State explicitamente
+                l.z = (r.z !== undefined) ? r.z : 0;
+                l.state = r.state || 'IDLE';
+            };
+
+            syncPart(local.head, remote.head);
+            syncPart(local.shoulders.l, remote.shoulders.l);
+            syncPart(local.shoulders.r, remote.shoulders.r);
+            syncPart(local.elbows.l, remote.elbows.l);
+            syncPart(local.elbows.r, remote.elbows.r);
+            
+            // Sincroniza punhos com Z e Estado
+            syncLimb(local.wrists.l, remote.wrists.l);
+            syncLimb(local.wrists.r, remote.wrists.r);
         },
 
         // -----------------------------------------------------------------
-        // LOOP PRINCIPAL (UPDATE) - FRAME INDEPENDENT
+        // LOOP PRINCIPAL (UPDATE)
         // -----------------------------------------------------------------
         update: function(ctx, w, h, inputPose) {
             try {
-                // Cálculo de Delta Time (Regra 5)
                 const now = performance.now();
-                const dt = Math.min((now - this.lastTime) / 1000, 0.1); // Cap em 100ms
+                const dt = Math.min((now - this.lastTime) / 1000, 0.1); 
                 this.lastTime = now;
 
                 if (this.state !== 'FIGHT') {
@@ -284,7 +297,7 @@
                     this.drawHUD(ctx, w, h);
                     this.renderMsgs(ctx, dt);
 
-                    // Timer (Delta Time Based)
+                    // Timer
                     if (this.timer > 0) this.timer -= dt;
                     else this.endRound();
 
@@ -310,61 +323,64 @@
                 const point = kp.find(k => k.name === name);
                 if (point && point.score > 0.3) {
                     const target = SafeUtils.toScreen(point, w, h);
-                    // Lerp independente de frame (Regra 2)
+                    // Lerp independente de frame
                     return SafeUtils.lerpPoint(currentPos, target, smooth, dt);
                 }
                 return currentPos;
             };
 
-            p.head = get('nose', p.head);
-            p.shoulders.l = get('left_shoulder', p.shoulders.l);
-            p.shoulders.r = get('right_shoulder', p.shoulders.r);
-            p.elbows.l = get('left_elbow', p.elbows.l);
-            p.elbows.r = get('right_elbow', p.elbows.r);
+            // Atualiza posições preservando objetos
+            const updatePart = (curr, name) => {
+                const next = get(name, curr);
+                curr.x = next.x;
+                curr.y = next.y;
+            };
+
+            updatePart(p.head, 'nose');
+            updatePart(p.shoulders.l, 'left_shoulder');
+            updatePart(p.shoulders.r, 'right_shoulder');
+            updatePart(p.elbows.l, 'left_elbow');
+            updatePart(p.elbows.r, 'right_elbow');
             
-            // Logica das Mãos com velocidade calculada
-            this.updateHandLogic(p.wrists.l, get('left_wrist', p.wrists.l), this.p1, this.p2, dt);
-            this.updateHandLogic(p.wrists.r, get('right_wrist', p.wrists.r), this.p1, this.p2, dt);
+            // Mãos precisam de get para lógica de velocidade
+            const nextWrL = get('left_wrist', p.wrists.l);
+            const nextWrR = get('right_wrist', p.wrists.r);
+            
+            this.updateHandLogic(p.wrists.l, nextWrL, this.p1, this.p2, dt);
+            this.updateHandLogic(p.wrists.r, nextWrR, this.p1, this.p2, dt);
 
             // Guarda
             const distL = SafeUtils.dist(p.wrists.l, p.head);
             const distR = SafeUtils.dist(p.wrists.r, p.head);
             this.p1.guard = (distL < CONF.BLOCK_DIST && distR < CONF.BLOCK_DIST);
             
-            // Stamina regen (baseada em tempo)
+            // Stamina regen
             if(this.p1.stamina < 100) this.p1.stamina += (10 * dt);
         },
 
-        // Lógica de Mão Genérica (Usada por Player e AI - Regra 3: Igualdade)
         updateHandLogic: function(hand, targetPos, owner, opponent, dt) {
-            // Calcula velocidade instantânea (pixels / segundo)
             const dist = SafeUtils.dist(hand, targetPos);
             const velocity = dist / (dt || 0.016);
             
-            // Atualiza posição X,Y
             hand.x = targetPos.x;
             hand.y = targetPos.y;
 
-            // Detecta Gatilho de Soco (Velocidade + Estado)
-            // Simulação: Soco só sai se tiver stamina mínima
+            // Gatilho de Soco
             if (velocity > CONF.PUNCH_THRESH && hand.state === 'IDLE' && owner.stamina > 15) {
                 hand.state = 'PUNCH';
                 hand.z = 0;
-                hand.hasHit = false; // RESET CRÍTICO (Regra A)
-                owner.stamina -= 20; // Custo de stamina
+                hand.hasHit = false; 
+                owner.stamina -= 20;
                 this.playSound('noise', 200, 0.05);
             }
 
-            // Máquina de Estados do Soco (Physics Based)
+            // Física do Soco
             if (hand.state === 'PUNCH') {
-                // Simulação: Stamina afeta velocidade (Regra C)
                 const fatigue = Math.max(0.4, owner.stamina / 100);
                 const spd = CONF.PUNCH_SPEED * CHARACTERS[owner.charId].speed * fatigue;
                 
-                hand.z += spd * dt; // Z avança com tempo
+                hand.z += spd * dt;
                 
-                // Checa Colisão (Regra 2 e 3)
-                // Janela de hit ativa entre z=50 e z=90
                 if (hand.z > 50 && hand.z < 90) {
                     this.checkHit(hand, owner, opponent);
                 }
@@ -376,17 +392,15 @@
                 if (hand.z <= 0) {
                     hand.z = 0;
                     hand.state = 'IDLE';
-                    hand.hasHit = false; // GARANTIA DE RESET (Regra A)
+                    hand.hasHit = false; 
                 }
             }
         },
 
         checkHit: function(hand, attacker, defender) {
-            // Evita hit duplo no mesmo soco (Regra A)
             if (hand.hasHit) return;
 
             const enemyPose = defender.pose;
-            // Hitbox simplificada
             const headBox = { x: enemyPose.head.x, y: enemyPose.head.y, r: 70 };
             const cx = (enemyPose.shoulders.l.x + enemyPose.shoulders.r.x) / 2;
             const cy = (enemyPose.shoulders.l.y + enemyPose.shoulders.r.y) / 2;
@@ -396,41 +410,36 @@
             const hitBody = SafeUtils.dist(hand, bodyBox) < bodyBox.r;
 
             if (hitHead || hitBody) {
-                hand.hasHit = true; // Marca que já acertou
+                hand.hasHit = true; 
                 
-                // Cálculo de Dano Realista (Regra C)
                 const basePwr = CHARACTERS[attacker.charId].pwr;
                 const fatigue = Math.max(0.3, attacker.stamina / 100);
                 let damage = basePwr * 5 * fatigue; 
 
                 if (defender.guard) {
-                    // Guarda reduz dano mas não zera (Chip damage)
                     damage *= 0.25; 
                     this.spawnMsg(headBox.x, headBox.y - 40, "BLOCK", "#aaa");
                     this.playSound('square', 100, 0.1);
-                    defender.hp = Math.max(0, defender.hp - damage);
                 } else {
-                    // Dano completo
                     if (hitHead) {
-                        damage *= 2.5; // Multiplicador Crítico
+                        damage *= 2.5;
                         this.spawnMsg(headBox.x, headBox.y - 50, "CRITICAL!", "#f00");
                         if(window.Gfx) window.Gfx.shakeScreen(10);
                         this.playSound('sawtooth', 150, 0.1);
                     } else {
-                        // Body shot
                         this.spawnMsg(bodyBox.x, bodyBox.y, "HIT", "#ff0");
                         if(window.Gfx) window.Gfx.shakeScreen(3);
                         this.playSound('sine', 100, 0.1);
                     }
-                    defender.hp = Math.max(0, defender.hp - damage);
                     attacker.score += Math.floor(damage * 10);
                 }
+                
+                defender.hp = Math.max(0, defender.hp - damage);
                 
                 if(this.isOnline && this.dbRef && attacker === this.p1) {
                      this.dbRef.child('players/' + defender.id).update({ hp: defender.hp });
                 }
 
-                // Rebote físico
                 hand.state = 'RETRACT';
             }
         },
@@ -438,10 +447,8 @@
         updateAI: function(w, h, dt) {
             const ai = this.p2;
             const p = ai.pose;
-            // Movimento Determinístico (Baseado em tempo, não random - Regra 4)
             const t = this.timer; 
             
-            // Base da Animação
             const cx = w/2;
             const cy = h * 0.35;
             p.head = { x: cx + Math.sin(t*2)*30, y: cy + Math.cos(t*3)*10 };
@@ -450,43 +457,33 @@
             p.elbows.l = { x: p.shoulders.l.x - 20, y: p.shoulders.l.y + 60 };
             p.elbows.r = { x: p.shoulders.r.x + 20, y: p.shoulders.r.y + 60 };
 
-            // Lógica Reativa Determinística
-            // Se o player socar (p1.stamina baixa), AI tenta defender
             if (this.p1.stamina < 90) ai.guard = true;
             else if (ai.stamina > 90) ai.guard = false;
 
-            // Decisão de Soco (Padrao oscilatório)
-            const attackPattern = Math.sin(t * 5); // Oscila rapidamente
+            const attackPattern = Math.sin(t * 5); 
             
             ['l', 'r'].forEach(s => {
                 const hnd = p.wrists[s];
                 let tx = p.head.x + (s==='l'?-40:40);
                 let ty = p.head.y + (ai.guard ? 0 : 80);
 
-                // Disparo de ataque
                 if (attackPattern > 0.9 && hnd.state === 'IDLE' && ai.stamina > 30) {
-                     // Define alvo como a posição do player (Simulação de mira)
                      ai.aiState.targetX = w/2 + (Math.sin(t)*50);
                      ai.aiState.targetY = h/2 + 50;
-                     // Velocidade simulada alta para gatilhar o updateHandLogic
                      tx = ai.aiState.targetX;
                      ty = ai.aiState.targetY;
                 }
 
-                // Move a mão "virtual" da AI
-                const speed = 5.0; // Lerp speed
+                const speed = 5.0; 
                 const nextPos = SafeUtils.lerpPoint(hnd, {x: tx, y: ty}, speed, dt);
                 
-                // Processa lógica física igual ao player (Regra 3)
                 this.updateHandLogic(hnd, nextPos, ai, this.p1, dt);
             });
             
-            // Stamina AI
             if(ai.stamina < 100) ai.stamina += (10 * dt);
         },
 
         sendUpdate: function() {
-            // Reduz frequência de envio
             if (Math.floor(this.timer * 10) % 3 === 0 && this.dbRef) {
                 const r = (v) => ({x: Math.round(v.x), y: Math.round(v.y), z: Math.round(v.z||0)});
                 const p = this.p1.pose;
@@ -537,36 +534,34 @@
                 ctx.lineWidth = width * s; ctx.lineCap='round'; ctx.strokeStyle = c.shirt; ctx.stroke();
             };
 
-            // Corpo
             ctx.fillStyle = c.shirt; 
             ctx.beginPath(); ctx.ellipse(cx, cy + (40*s), 50*s, 70*s, 0, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = c.overall; 
             ctx.fillRect(cx - 35*s, cy + 50*s, 70*s, 80*s);
             
-            // Membros
             limb(p.shoulders.l, p.elbows.l, 25);
             limb(p.elbows.l, p.wrists.l, 25);
             limb(p.shoulders.r, p.elbows.r, 25);
             limb(p.elbows.r, p.wrists.r, 25);
 
-            // Cabeça
             ctx.fillStyle = c.skin; ctx.beginPath(); ctx.arc(p.head.x, p.head.y, 45*s, 0, Math.PI*2); ctx.fill();
-            // Boné
             ctx.fillStyle = c.hat; 
             ctx.beginPath(); ctx.arc(p.head.x, p.head.y - 10*s, 48*s, Math.PI, 0); ctx.fill();
             ctx.beginPath(); ctx.ellipse(p.head.x, p.head.y - 10*s, 50*s, 15*s, 0, Math.PI, 0); ctx.fill();
             ctx.fillStyle = "#fff"; ctx.font = `bold ${30*s}px Arial`; ctx.textAlign = 'center';
             ctx.fillText(CHARACTERS[player.charId].name[0], p.head.x, p.head.y - 35*s);
 
-            // Luvas
             this.drawGlove(ctx, p.wrists.l, s);
             this.drawGlove(ctx, p.wrists.r, s);
         },
 
         drawGlove: function(ctx, hand, s) {
             if (hand.x === 0) return;
-            const zScale = Math.max(0.5, 1.0 - (hand.z * 0.003)); 
+            // Proteção contra NaN se Z não for sincronizado
+            const zVal = hand.z || 0;
+            const zScale = Math.max(0.5, 1.0 - (zVal * 0.003)); 
             const size = s * zScale * 35;
+            
             ctx.save();
             ctx.translate(hand.x, hand.y);
             ctx.shadowBlur = hand.state === 'PUNCH' ? 20 : 0;
@@ -587,33 +582,23 @@
         },
 
         uiChar: function(ctx, w, h) {
-            // Fundo
             ctx.fillStyle = "#222"; ctx.fillRect(0,0,w,h);
-            
             const colW = w / CHARACTERS.length;
-            
             CHARACTERS.forEach((c, i) => {
                 const x = i * colW;
                 const center = x + colW/2;
-                
-                // Highlight seleção
                 if (i === this.selChar) {
                     ctx.fillStyle = c.c.overall;
                     ctx.fillRect(x, 0, colW, h);
                 }
-                
-                // Nome e Avatar
                 ctx.fillStyle = "#fff"; ctx.textAlign="center";
                 ctx.font = i === this.selChar ? "bold 30px Arial" : "20px Arial";
                 ctx.fillText(c.name, center, 100);
-                
                 ctx.fillStyle = c.c.hat;
                 ctx.beginPath(); ctx.arc(center, 200, 40, 0, Math.PI*2); ctx.fill();
                 ctx.fillStyle = "#fff"; ctx.font="30px Arial"; 
                 ctx.fillText(c.name[0], center, 210);
             });
-
-            // Botão confirmar
             ctx.fillStyle = "#2ecc71"; ctx.fillRect(0, h-80, w, 80);
             ctx.fillStyle = "#fff"; ctx.font="bold 40px Arial";
             ctx.fillText("INICIAR LUTA", w/2, h-25);
@@ -641,8 +626,6 @@
             ctx.fillStyle = "#444"; ctx.fillRect(w-10-barW, 10, barW, 25);
             ctx.fillStyle = "#3498db"; ctx.fillRect(w-10-barW, 10, barW * (this.p2.hp/100), 25);
             ctx.fillStyle = "#f1c40f"; ctx.fillRect(10, 40, barW * (this.p1.stamina/100), 5);
-            
-            // Timer HUD
             ctx.fillStyle = "#fff"; ctx.font="bold 30px Arial"; ctx.textAlign="center";
             ctx.fillText(Math.ceil(this.timer), w/2, 35);
         },
@@ -654,7 +637,7 @@
         },
 
         spawnMsg: function(x, y, txt, col) {
-            this.msgs.push({x, y, t:txt, c:col, life: 1.0}); // Life em segundos
+            this.msgs.push({x, y, t:txt, c:col, life: 1.0}); 
         },
         
         renderMsgs: function(ctx, dt) {
