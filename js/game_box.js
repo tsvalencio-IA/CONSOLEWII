@@ -69,7 +69,7 @@
             head: {x:0, y:0},
             shoulders: {l:{x:0,y:0}, r:{x:0,y:0}},
             elbows: {l:{x:0,y:0}, r:{x:0,y:0}},
-            wrists: {l:{x:0,y:0, z:0, state:'IDLE'}, r:{x:0,y:0, z:0, state:'IDLE'}}
+            wrists: {l:{x:0,y:0, z:0, state:'IDLE', hasHit: false}, r:{x:0,y:0, z:0, state:'IDLE', hasHit: false}}
         })
     };
 
@@ -174,6 +174,7 @@
         },
 
         startGame: function() {
+            // Garante que p1 usa o selChar selecionado visualmente
             this.p1 = this.createPlayer('p1', this.selChar);
             
             if (this.isOnline) {
@@ -345,16 +346,21 @@
             hand.y = targetPos.y;
 
             // Detecta Gatilho de Soco (Velocidade + Estado)
-            if (velocity > CONF.PUNCH_THRESH && hand.state === 'IDLE' && owner.stamina > 10) {
+            // Simulação: Soco só sai se tiver stamina mínima
+            if (velocity > CONF.PUNCH_THRESH && hand.state === 'IDLE' && owner.stamina > 15) {
                 hand.state = 'PUNCH';
                 hand.z = 0;
-                owner.stamina -= 15;
+                hand.hasHit = false; // RESET CRÍTICO (Regra A)
+                owner.stamina -= 20; // Custo de stamina
                 this.playSound('noise', 200, 0.05);
             }
 
             // Máquina de Estados do Soco (Physics Based)
             if (hand.state === 'PUNCH') {
-                const spd = CONF.PUNCH_SPEED * CHARACTERS[owner.charId].speed;
+                // Simulação: Stamina afeta velocidade (Regra C)
+                const fatigue = Math.max(0.4, owner.stamina / 100);
+                const spd = CONF.PUNCH_SPEED * CHARACTERS[owner.charId].speed * fatigue;
+                
                 hand.z += spd * dt; // Z avança com tempo
                 
                 // Checa Colisão (Regra 2 e 3)
@@ -370,12 +376,13 @@
                 if (hand.z <= 0) {
                     hand.z = 0;
                     hand.state = 'IDLE';
+                    hand.hasHit = false; // GARANTIA DE RESET (Regra A)
                 }
             }
         },
 
         checkHit: function(hand, attacker, defender) {
-            // Evita hit duplo no mesmo soco
+            // Evita hit duplo no mesmo soco (Regra A)
             if (hand.hasHit) return;
 
             const enemyPose = defender.pose;
@@ -391,31 +398,38 @@
             if (hitHead || hitBody) {
                 hand.hasHit = true; // Marca que já acertou
                 
+                // Cálculo de Dano Realista (Regra C)
+                const basePwr = CHARACTERS[attacker.charId].pwr;
+                const fatigue = Math.max(0.3, attacker.stamina / 100);
+                let damage = basePwr * 5 * fatigue; 
+
                 if (defender.guard) {
-                    this.spawnMsg(headBox.x, headBox.y - 40, "BLOCKED", "#aaa");
+                    // Guarda reduz dano mas não zera (Chip damage)
+                    damage *= 0.25; 
+                    this.spawnMsg(headBox.x, headBox.y - 40, "BLOCK", "#aaa");
                     this.playSound('square', 100, 0.1);
+                    defender.hp = Math.max(0, defender.hp - damage);
                 } else {
-                    let dmg = CHARACTERS[attacker.charId].pwr;
-                    
+                    // Dano completo
                     if (hitHead) {
-                        dmg *= 10;
+                        damage *= 2.5; // Multiplicador Crítico
                         this.spawnMsg(headBox.x, headBox.y - 50, "CRITICAL!", "#f00");
                         if(window.Gfx) window.Gfx.shakeScreen(10);
                         this.playSound('sawtooth', 150, 0.1);
                     } else {
-                        dmg *= 5;
+                        // Body shot
                         this.spawnMsg(bodyBox.x, bodyBox.y, "HIT", "#ff0");
                         if(window.Gfx) window.Gfx.shakeScreen(3);
                         this.playSound('sine', 100, 0.1);
                     }
-
-                    defender.hp = Math.max(0, defender.hp - dmg);
-                    attacker.score += Math.floor(dmg * 10);
-                    
-                    if(this.isOnline && this.dbRef && attacker === this.p1) {
-                         this.dbRef.child('players/' + defender.id).update({ hp: defender.hp });
-                    }
+                    defender.hp = Math.max(0, defender.hp - damage);
+                    attacker.score += Math.floor(damage * 10);
                 }
+                
+                if(this.isOnline && this.dbRef && attacker === this.p1) {
+                     this.dbRef.child('players/' + defender.id).update({ hp: defender.hp });
+                }
+
                 // Rebote físico
                 hand.state = 'RETRACT';
             }
