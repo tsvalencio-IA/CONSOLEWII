@@ -1,7 +1,8 @@
 // =============================================================================
-// KART LEGENDS: ULTIMATE AUDIO EDITION (FX + ENGINE SOUNDS)
+// KART LEGENDS: PLATINUM EDITION (ALL FEATURES MERGED)
 // ARQUITETO: SENIOR DEV (CODE 177)
-// STATUS: 100% FUNCIONAL + SOM DE MOTOR, DERRAPAGEM E TURBO
+// VERSÃO: 3.0 FINAL
+// FEATURES: MULTIPLAYER MANUAL + VOLANTE VIRTUAL + MINIMAPA + GESTOS + ÁUDIO PRO
 // =============================================================================
 
 (function() {
@@ -49,6 +50,7 @@
         lateralInertiaDecay: 0.95 
     };
 
+    // Variáveis Globais do Módulo
     let segments = [];
     let trackLength = 0;
     let minimapPath = [];
@@ -57,7 +59,10 @@
     let particles = [];
     let nitroBtn = null;
     
+    // Objeto Dummy para segurança de renderização
     const DUMMY_SEG = { curve: 0, y: 0, color: 'light', obs: [], theme: 'grass' };
+
+    // --- Funções Auxiliares ---
 
     function getSegment(index) {
         if (!segments || segments.length === 0) return DUMMY_SEG;
@@ -85,12 +90,12 @@
     }
 
     // -----------------------------------------------------------------
-    // 2. LÓGICA DO JOGO
+    // 2. LÓGICA DO JOGO (OBJETO PRINCIPAL)
     // -----------------------------------------------------------------
     const Logic = {
         state: 'MODE_SELECT',
         raceState: 'LOBBY',
-        roomId: 'mario_arena_audio_v3', // Sala atualizada
+        roomId: 'mario_gp_platinum_v1', // Sala Nova Limpa
         selectedChar: 0,
         selectedTrack: 0,
         isReady: false,
@@ -102,15 +107,15 @@
         totalRacers: 0,
         remotePlayersData: {},
 
-        // Física
+        // Física e Input
         speed: 0, pos: 0, playerX: 0, steer: 0, targetSteer: 0,
         nitro: 100, turboLock: false, gestureTimer: 0,
         spinAngle: 0, spinTimer: 0, lateralInertia: 0, vibration: 0,
         
-        // Audio Timer (para não saturar o som)
+        // Audio
         engineTimer: 0,
         
-        // Corrida
+        // Estado da Corrida
         lap: 1, maxLapPos: 0,
         status: 'RACING', 
         finishTime: 0,
@@ -119,6 +124,7 @@
         visualTilt: 0, bounce: 0, skyColor: 0,
         inputActive: false, 
         
+        // Elementos Visuais Especiais
         virtualWheel: { x:0, y:0, r:60, opacity:0, isHigh: false },
         rivals: [], 
 
@@ -191,6 +197,7 @@
                     window.Sfx.click();
                 } 
                 else if (this.state === 'LOBBY') {
+                    // Botão START / READY
                     if (y > 0.8) { 
                         if (this.isOnline) {
                             if (this.isHost) {
@@ -199,7 +206,7 @@
                                 if (playerCount >= 2) {
                                     this.roomRef.update({ raceState: 'RACING', totalRacers: playerCount });
                                 } else {
-                                    window.System.msg("AGUARDANDO JOGADORES...");
+                                    window.System.msg("PRECISA DE 2 JOGADORES...");
                                 }
                             } else {
                                 this.toggleReady(); 
@@ -208,11 +215,13 @@
                             this.startRace(this.selectedTrack);
                         }
                     } 
+                    // Seleção Personagem
                     else if (y < 0.35) { 
                         this.selectedChar = (this.selectedChar + 1) % CHARACTERS.length; 
                         window.Sfx.hover(); 
                         if(this.isOnline) this.syncLobby();
                     } 
+                    // Seleção Pista (Host/Offline)
                     else if (y > 0.35 && y < 0.6) { 
                         if(!this.isOnline || this.isHost) {
                             this.selectedTrack = (this.selectedTrack + 1) % TRACKS.length; 
@@ -259,7 +268,7 @@
                 addRoad(20, -5); addRoad(100, 0); addRoad(50, 2); addRoad(50, 0);
             }
             trackLength = segments.length * CONF.SEGMENT_LENGTH;
-            buildMiniMap(segments);
+            buildMiniMap(segments); // CRUCIAL: GERA O MINIMAPA
         },
 
         selectMode: function(mode) {
@@ -380,7 +389,7 @@
             this.updatePhysics(w, h, pose);
             this.checkRaceStatus();
             this.renderWorld(ctx, w, h);
-            this.renderUI(ctx, w, h);
+            this.renderUI(ctx, w, h); // AGORA INCLUI MINIMAPA E VOLANTE
             
             if (this.isOnline) this.syncMultiplayer();
             return Math.floor(this.score);
@@ -437,7 +446,7 @@
 
             let detected = false;
             // -----------------------------------------------------------
-            // INPUT DE VOLANTE & GESTO DE TURBO
+            // 1. INPUT DE POSE (VOLANTE & TURBO RESTAURADOS)
             // -----------------------------------------------------------
             if(canControl && pose && pose.keypoints) {
                 const map = (pt) => ({ x: (1 - pt.x/640)*w, y: (pt.y/480)*h });
@@ -448,14 +457,30 @@
                 if (lw?.score > 0.2 && rw?.score > 0.2) {
                     const pl = map(lw); const pr = map(rw);
                     d.targetSteer = Math.atan2(pr.y - pl.y, pr.x - pl.x) * 3.0;
-                    d.virtualWheel = { x: (pl.x+pr.x)/2, y: (pl.y+pr.y)/2, r: Math.hypot(pr.x-pl.x, pr.y-pl.y)/2, opacity: 1 };
+                    
+                    // ATUALIZAÇÃO DO VOLANTE VISUAL
+                    d.virtualWheel = { 
+                        x: (pl.x+pr.x)/2, 
+                        y: (pl.y+pr.y)/2, 
+                        r: Math.hypot(pr.x-pl.x, pr.y-pl.y)/2, 
+                        opacity: 1,
+                        isHigh: false
+                    };
+                    
                     detected = true;
+                    
+                    // GESTO DE TURBO (Mãos acima do nariz)
                     if (nose && lw.y < nose.y && rw.y < nose.y) {
-                        d.gestureTimer++; d.virtualWheel.isHigh = true;
+                        d.gestureTimer++; 
+                        d.virtualWheel.isHigh = true; // Brilho visual
                         if (d.gestureTimer > 25 && d.nitro > 20 && !d.turboLock) {
-                            d.turboLock = true; d.pushMsg("TURBO ON!", "#0ff"); window.Sfx.play(800, 'square', 0.1, 0.1);
+                            d.turboLock = true; 
+                            d.pushMsg("TURBO ON!", "#0ff"); 
+                            window.Sfx.play(800, 'square', 0.1, 0.1);
                         }
-                    } else { d.gestureTimer = 0; d.virtualWheel.isHigh = false; }
+                    } else { 
+                        d.gestureTimer = 0; 
+                    }
                 }
             }
             d.inputActive = detected; 
@@ -485,23 +510,18 @@
             d.speed *= currentDrag;
 
             // -----------------------------------------------------------
-            // SISTEMA DE ÁUDIO DO MOTOR (ENGINE SOUND)
+            // 2. SISTEMA DE ÁUDIO (ENGINE, SKID, TURBO)
             // -----------------------------------------------------------
             if(d.status === 'RACING') {
                 d.engineTimer++;
-                // Toca som a cada 5 frames para simular loop do motor
-                if (d.engineTimer > 5) {
+                if (d.engineTimer > 5) { // Loop para não travar o audio
                     d.engineTimer = 0;
-                    // Pitch base: 60Hz. Aumenta com a velocidade.
                     const pitch = 60 + (Math.abs(d.speed) * 0.7);
-                    // Volume base baixo, aumenta levemente com a velocidade
                     const vol = 0.05 + (Math.abs(d.speed) / CONF.MAX_SPEED) * 0.08;
-                    // 'sawtooth' simula bem o ronco de motor
-                    window.Sfx.play(pitch, 'sawtooth', 0.1, vol);
+                    window.Sfx.play(pitch, 'sawtooth', 0.1, vol); // Motor
                     
-                    // Camada de Turbo (Som agudo adicional)
                     if (d.turboLock) {
-                        window.Sfx.play(pitch * 2, 'square', 0.1, 0.05);
+                        window.Sfx.play(pitch * 2, 'square', 0.1, 0.05); // Turbo Whine
                     }
                 }
             }
@@ -515,10 +535,11 @@
 
             if(Math.abs(d.lateralInertia) > 0.12 && d.speed > 60 && absX < 1.4) {
                 this.spawnParticle(w/2 - 45, h*0.92, 'smoke'); this.spawnParticle(w/2 + 45, h*0.92, 'smoke');
-                // Som de Derrapagem (Skid) - Toca intercalado com o motor
+                // Skid Sound
                 if(d.engineTimer === 2) window.Sfx.play(120, 'square', 0.1, 0.08);
             }
 
+            // IA (Offline)
             if (!d.isOnline && d.state !== 'GAMEOVER') {
                 d.rivals.forEach(r => {
                     if (r.status === 'FINISHED') return;
@@ -680,6 +701,135 @@
             ctx.fillStyle = '#000'; ctx.font='bold 8px Arial'; ctx.textAlign='center'; 
             ctx.fillText(stats.name[0], 0, -30);
             ctx.restore(); ctx.restore(); 
+        },
+
+        renderUI: function(ctx, w, h) {
+            const d = Logic;
+            
+            hudMessages = hudMessages.filter(m => m.life > 0);
+            hudMessages.forEach((m, i) => {
+                ctx.save(); ctx.translate(w/2, h/2 - i*45); if(m.scale < 1) m.scale += 0.1;
+                ctx.scale(m.scale, m.scale); ctx.fillStyle = m.color; 
+                ctx.font = `bold ${m.size}px 'Russo One'`; ctx.textAlign = 'center';
+                ctx.shadowColor = 'black'; ctx.shadowBlur = 10;
+                ctx.fillText(m.text, 0, 0); ctx.restore(); m.life--;
+            });
+
+            if (d.state === 'GAMEOVER') {
+                ctx.fillStyle = 'rgba(0,0,0,0.85)'; ctx.fillRect(0,0,w,h);
+                ctx.fillStyle = '#fff'; ctx.font = "bold 50px 'Russo One'"; ctx.textAlign = 'center';
+                ctx.fillText("RESULTADO FINAL", w/2, 100);
+                const allRacers = [
+                    { name: CHARACTERS[d.selectedChar].name, time: d.finishTime, id: 'me', status: d.status, pos: d.pos, lap: d.lap },
+                    ...d.rivals.map(r => ({ name: r.name || 'CPU', time: r.finishTime || 0, id: r.id, status: r.status, pos: r.pos, lap: r.lap }))
+                ];
+                allRacers.sort((a, b) => {
+                    if (a.status === 'FINISHED' && b.status === 'FINISHED') return (a.time) - (b.time);
+                    if (a.status === 'FINISHED') return -1;
+                    if (b.status === 'FINISHED') return 1;
+                    const distA = (a.lap * 100000) + a.pos;
+                    const distB = (b.lap * 100000) + b.pos;
+                    return distB - distA;
+                });
+                allRacers.forEach((r, i) => {
+                    const y = 200 + (i * 50);
+                    ctx.fillStyle = r.id === 'me' ? '#ff0' : '#fff';
+                    ctx.font = "30px Arial"; ctx.textAlign = 'left';
+                    ctx.fillText(`${i+1}. ${r.name}`, w/2 - 150, y);
+                    ctx.textAlign = 'right';
+                    ctx.fillText(r.status === 'FINISHED' ? "🏁" : "DNF", w/2 + 150, y);
+                });
+                ctx.fillStyle = '#aaa'; ctx.font = "20px 'Russo One'"; ctx.textAlign = 'center';
+                ctx.fillText("Toque para voltar ao menu", w/2, h - 50);
+                return; 
+            }
+
+            if (d.state === 'SPECTATE') {
+                ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, h/2 - 50, w, 100);
+                ctx.fillStyle = '#0f0'; ctx.font = "bold 40px 'Russo One'"; ctx.textAlign = 'center';
+                ctx.fillText("CORRIDA FINALIZADA!", w/2, h/2 - 10);
+                ctx.font = "20px 'Russo One'"; ctx.fillStyle = '#fff'; 
+                ctx.fillText(`POSIÇÃO: ${d.finalRank}º | AGUARDANDO PILOTOS...`, w/2, h/2 + 30);
+                return;
+            }
+
+            // HUD BASE
+            const hudX = w - 80; const hudY = h - 60; 
+            ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.arc(hudX, hudY, 55, 0, Math.PI * 2); ctx.fill();
+            const rpm = Math.min(1, d.speed / CONF.TURBO_MAX_SPEED); 
+            ctx.beginPath(); ctx.arc(hudX, hudY, 50, Math.PI, Math.PI + Math.PI * rpm); 
+            ctx.lineWidth = 6; ctx.strokeStyle = d.turboLock ? '#0ff' : '#f33'; ctx.stroke();
+            ctx.fillStyle = '#fff'; ctx.font = "bold 36px 'Russo One'"; ctx.textAlign = 'center'; ctx.fillText(Math.floor(d.speed), hudX, hudY + 10);
+            ctx.font = "bold 24px 'Russo One'"; ctx.fillStyle = '#ff0'; ctx.fillText(`${d.finalRank}º`, hudX, hudY - 35);
+            ctx.fillStyle = '#fff'; ctx.font = "bold 14px 'Russo One'"; ctx.fillText(`VOLTA ${d.lap}/${CONF.TOTAL_LAPS}`, hudX, hudY - 20);
+
+            // BARRA DE TURBO
+            ctx.fillStyle = '#111'; ctx.fillRect(w/2 - 110, 20, 220, 20);
+            ctx.fillStyle = d.turboLock ? '#0ff' : (d.nitro > 25 ? '#f90' : '#f33');
+            ctx.fillRect(w/2 - 108, 22, (216) * (d.nitro/100), 16);
+
+            // -----------------------------------------------------------------
+            // 3. RESTAURAÇÃO: MINIMAPA
+            // -----------------------------------------------------------------
+            if (minimapPath.length > 0) {
+                const mapX = 25, mapY = 95, mapSize = 130;
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'; ctx.fillRect(mapX, mapY, mapSize, mapSize);
+                ctx.save(); ctx.translate(mapX + mapSize/2, mapY + mapSize/2);
+                const scale = Math.min((mapSize-20)/minimapBounds.w, (mapSize-20)/minimapBounds.h);
+                ctx.scale(scale, scale); ctx.translate(-(minimapBounds.minX+minimapBounds.maxX)/2, -(minimapBounds.minZ+minimapBounds.maxZ)/2);
+                
+                // Desenha Pista
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 10; ctx.beginPath();
+                minimapPath.forEach((p, i) => { if(i===0) ctx.moveTo(p.x, p.z); else ctx.lineTo(p.x, p.z); });
+                ctx.closePath(); ctx.stroke();
+                
+                // Desenha Pontos
+                const drawDot = (pos, c, r) => {
+                    const idx = Math.floor((pos/trackLength) * minimapPath.length) % minimapPath.length;
+                    const pt = minimapPath[idx]; 
+                    if(pt){
+                        ctx.fillStyle=c; ctx.beginPath(); ctx.arc(pt.x, pt.z, r, 0, Math.PI*2); 
+                        ctx.fill(); ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke();
+                    }
+                };
+                d.rivals.forEach(r => drawDot(r.pos, r.status==='FINISHED' ? '#0f0' : '#ffee00', 18)); 
+                drawDot(d.pos, '#ff0000', 22);
+                ctx.restore();
+            }
+
+            // -----------------------------------------------------------------
+            // 4. RESTAURAÇÃO: VOLANTE VIRTUAL (VISUALIZAÇÃO DE INPUT)
+            // -----------------------------------------------------------------
+            if (d.virtualWheel.opacity > 0.01) {
+                ctx.save(); ctx.globalAlpha = d.virtualWheel.opacity; ctx.translate(d.virtualWheel.x, d.virtualWheel.y);
+                if (d.virtualWheel.isHigh) { ctx.shadowBlur = 25; ctx.shadowColor = '#0ff'; }
+                
+                ctx.rotate(d.steer * 0.6);
+                
+                // Aro Externo
+                ctx.beginPath(); ctx.arc(0, 0, d.virtualWheel.r, 0, Math.PI * 2);
+                ctx.lineWidth = 18; ctx.strokeStyle = '#2d3436'; ctx.stroke();
+
+                // Pegas (Grips)
+                ctx.beginPath(); ctx.arc(0, 0, d.virtualWheel.r, -Math.PI * 0.25, -Math.PI * 0.75, true); 
+                ctx.lineWidth = 18; ctx.strokeStyle = '#d63031'; ctx.stroke();
+                ctx.beginPath(); ctx.arc(0, 0, d.virtualWheel.r, Math.PI * 0.25, Math.PI * 0.75, false); 
+                ctx.strokeStyle = '#d63031'; ctx.stroke();
+
+                // Centro
+                ctx.beginPath(); ctx.moveTo(-d.virtualWheel.r + 10, 0); ctx.lineTo(d.virtualWheel.r - 10, 0);
+                ctx.moveTo(0, 0); ctx.lineTo(0, d.virtualWheel.r - 10);
+                ctx.lineWidth = 12; ctx.strokeStyle = '#bdc3c7'; ctx.lineCap = 'round'; ctx.stroke();
+
+                ctx.beginPath(); ctx.arc(0, 0, 18, 0, Math.PI * 2);
+                ctx.fillStyle = '#2d3436'; ctx.fill();
+                ctx.lineWidth = 2; ctx.strokeStyle = '#bdc3c7'; ctx.stroke();
+
+                ctx.fillStyle = '#d63031'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText("GT", 0, 1);
+
+                ctx.restore();
+            }
         },
 
         renderModeSelect: function(ctx, w, h) {
